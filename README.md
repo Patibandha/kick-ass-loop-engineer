@@ -22,6 +22,49 @@ or run the pipeline standalone from the CLI.
 
 ---
 
+## The problem: you're the loop
+
+Work with an AI model the usual way and **you are the loop.** You prompt, read the output,
+spot the wrong import or the invented API, re-type the correction, and go again — holding all
+the state in your head and rebuilding context from scratch every session. The model does the
+thirty-second part; **you** run the iteration by hand, forever. Call it the **re-prompting tax.**
+
+Every workaround people reach for — snippet files, a "here's our stack" preamble pasted each
+morning, a doc of prompts that "worked" — is really an attempt to escape the single turn.
+
+## What changes: you give it a task, it decides what it needs
+
+kick-ass-loop-engineer takes the loop off your hands. You describe an **outcome** and a
+**checkable done-when** — and the machine works out the rest:
+
+- it **interviews you only on the genuinely ambiguous parts** — a six-slot think-tank
+  (purpose, users, constraints, success metrics, anti-goals, risks), one question at a time —
+  and infers the rest (indentation, test runner, file layout) from your repo;
+- it **researches** the facts it will rely on, and refuses to build on an unverified guess;
+- it **builds, verifies against real artifacts, and has a different model family review** the
+  result — then reports an outcome you can act on.
+
+You stop babysitting turns and start reviewing outcomes. That's the whole pitch: **describe
+the destination, not every step.**
+
+![Hand it a task — it runs the build → verify → review loop.](assets/hero-loop.gif)
+
+## Who it's for
+
+- **Solo devs & indie hackers** who want a second (and third) set of hands that works while
+  they don't — without a frontier-model bill for every iteration.
+- **Teams** that want *cheap* iteration and *high-judgment* review: the grind runs on a local
+  model; the expensive model only arbitrates.
+- **Anyone running local models** (via Ollama — Llama, Qwen, Kimi, DeepSeek) who wants real
+  verification instead of "the tests pass, trust me."
+- **Tinkerers & researchers** exploring autonomous build/verify loops who want the guardrails
+  enforced in code, not in a polite prompt.
+
+If you've ever thought *"I've explained this to the model four times already"* — that's the
+itch this scratches.
+
+---
+
 ## Why it's different
 
 Most "AI writes code" loops stop at _"the tests pass."_ This one doesn't trust that.
@@ -128,6 +171,21 @@ done when `python -m unittest discover -s todo/tests` passes
 The engine itself makes **no network calls** — it shells out to your configured provider and
 otherwise runs on the Python standard library.
 
+### Bring your own model — stated accurately
+
+Model-agnostic is the whole point, so here's the honest state of it. **Today there are three
+native backends:** `ollama` (any local or cloud-proxied model — Meta **Llama**, **Qwen**,
+**Kimi**, **DeepSeek**), `claude_code`, and `anthropic`. Use any of them as the builder or the
+reviewer; the one rule the engine enforces is that **the reviewer is a different model family
+than the builder**, so no model grades its own homework.
+
+ChatGPT / Gemini and other vendors are reachable **only through an OpenAI-compatible or Ollama
+shim** right now — there's no first-class adapter yet. Native adapters for every major web AI
+are on the [roadmap](#roadmap); the core is built so that's a matter of adding an adapter, not
+a rewrite.
+
+![Any model as the muscle; a different family reviews.](assets/model-agnostic.gif)
+
 ---
 
 ## Configuration
@@ -189,6 +247,8 @@ template. The pipeline runs with sane defaults even if you delete the optional s
 
 ## Proof-of-test
 
+![green → revert → red → restore → green.](assets/proof-of-test.gif)
+
 The feature the whole design is built around. When a gate runs with `prove: true`, the engine
 doesn't just check that the suite is green — it **proves the test exercises the change**:
 
@@ -241,6 +301,25 @@ Guardrails are enforced **in code, not just prompts**:
   sensitive paths (`secrets/`, `*/auth/`, `*payment*`) park the run for human approval.
 - Generated output is treated as **untrusted data** — never executed, never followed as
   instructions. See [`.claude/skills/loop-engineer/references/security.md`](.claude/skills/loop-engineer/references/security.md).
+
+---
+
+## Roadmap
+
+The model-agnostic core is built so that **adding a provider is an adapter, not a rewrite** —
+which is exactly where this is headed:
+
+- **Universal provider support** — native adapters for **every major web AI agent on the
+  market**: OpenAI / ChatGPT, Google **Gemini**, hosted Meta **Llama**, Anthropic **Claude**,
+  and **Japanese models** (Sakana AI, ELYZA, Preferred Networks **PLaMo**, Rakuten AI, NTT
+  tsuzumi) — plus anything reachable over an OpenAI-compatible endpoint. The goal: pick
+  *literally any* AI agent, anywhere, as your builder or reviewer, and mix families freely for
+  cross-model review.
+- **Observability & control plane** — a separate layer for multi-channel notifications and a
+  live dashboard, so you can watch and steer long autonomous runs without babysitting a terminal.
+
+Shipped today are the three native backends above (`ollama`, `claude_code`, `anthropic`);
+everything in this section is honestly labeled **not yet built.**
 
 ---
 
