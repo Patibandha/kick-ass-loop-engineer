@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 620" width="1280" height="620" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="kick-ass-loop-engineer verified pipeline: objective through decompose, ensemble, gate and proof-of-test, cross-model review, and promote to a proven RunOutcome">
+<rect x="0" y="0" width="1280" height="620" rx="20" fill="#101017"/>
+<defs><radialGradient id="glow" cx="88%" cy="6%" r="70%"><stop offset="0%" stop-color="#FF7A45" stop-opacity="0.14"/><stop offset="60%" stop-color="#FF7A45" stop-opacity="0"/></radialGradient><radialGradient id="glow2" cx="4%" cy="100%" r="60%"><stop offset="0%" stop-color="#6FA8FF" stop-opacity="0.10"/><stop offset="55%" stop-color="#6FA8FF" stop-opacity="0"/></radialGradient><marker id="arw" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#FF7A45"/></marker></defs>
+<rect x="0" y="0" width="1280" height="620" rx="20" fill="url(#glow)"/>
+<rect x="0" y="0" width="1280" height="620" rx="20" fill="url(#glow2)"/>
+<text x="60" y="66" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="13" letter-spacing="4" fill="#FF7A45">OPEN SOURCE &#183; MIT &#183; PYTHON 3.9+ &#183; STDLIB-ONLY ENGINE</text>
+<text x="60" y="104" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="34" font-weight="700" fill="#E7E9F0">kick-ass<tspan fill="#FF7A45">-</tspan>loop-engineer</text>
+<text x="60" y="134" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="16" fill="#9CA2B4">A local model builds inside a verified pipeline. Nothing merges until it&#8217;s <tspan fill="#35D6A4">proven</tspan>.</text>
+<text x="60" y="184" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="12.5" letter-spacing="1" fill="#6A7085">YOU GIVE&#8194;<tspan fill="#FFB27E">--objective</tspan> "add rate limiting"&#8194;&#8194;<tspan fill="#FFB27E">--done-when</tspan> "pytest -q passes"</text>
+<rect x="60" y="210" width="200" height="210" rx="14" fill="#20232F" stroke="#2C303E" stroke-width="1.5"/>
+<rect x="60" y="210" width="4" height="210" rx="2" fill="#FF7A45"/>
+<text x="78" y="244" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" fill="#6A7085">01</text>
+<text x="78" y="272" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="16.5" font-weight="700" fill="#E7E9F0">DECOMPOSE</text>
+<text x="78" y="302" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#9CA2B4">split into smallest</text>
+<text x="78" y="322" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#9CA2B4">verifiable slices</text>
+<text x="78" y="398" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" letter-spacing="0.5" fill="#6A7085">PROVABLE UNITS</text>
+<line x1="266" y1="315" x2="294" y2="315" stroke="#FF7A45" stroke-width="2" marker-end="url(#arw)" opacity="0.8"/>
+<rect x="300" y="210" width="200" height="210" rx="14" fill="#20232F" stroke="#2C303E" stroke-width="1.5"/>
+<rect x="300" y="210" width="4" height="210" rx="2" fill="#FF7A45"/>
+<text x="318" y="244" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" fill="#6A7085">02</text>
+<text x="318" y="272" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="16.5" font-weight="700" fill="#E7E9F0">ENSEMBLE</text>
+<text x="318" y="302" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#9CA2B4">race N attempts, each</text>
+<text x="318" y="322" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#9CA2B4">in its own git worktree</text>
+<text x="318" y="398" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" letter-spacing="0.5" fill="#6A7085">ISOLATED · DISPOSABLE</text>
+<line x1="506" y1="315" x2="534" y2="315" stroke="#FF7A45" stroke-width="2" marker-end="url(#arw)" opacity="0.8"/>
+<rect x="540" y="210" width="200" height="210" rx="14" fill="#20232F" stroke="#35D6A4" stroke-width="1.5"/>
+<rect x="540" y="210" width="4" height="210" rx="2" fill="#35D6A4"/>
+<text x="558" y="244" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" fill="#6A7085">03</text>
+<text x="558" y="272" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="16.5" font-weight="700" fill="#35D6A4">GATE + PROOF</text>
+<text x="558" y="302" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#9CA2B4">run the gate, then</text>
+<text x="558" y="322" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#9CA2B4">PROVE it — revert,</text>
+<text x="558" y="342" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#9CA2B4">watch it break, restore</text>
+<circle cx="563.0" cy="390" r="5" fill="#35D6A4"/>
+<text x="573.0" y="394" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="10" fill="#6A7085">green</text>
+<circle cx="621.0" cy="390" r="5" fill="#FF7A45"/>
+<text x="631.0" y="394" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="10" fill="#6A7085">red</text>
+<circle cx="679.0" cy="390" r="5" fill="#35D6A4"/>
+<text x="689.0" y="394" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="10" fill="#6A7085">green</text>
+<line x1="746" y1="315" x2="774" y2="315" stroke="#FF7A45" stroke-width="2" marker-end="url(#arw)" opacity="0.8"/>
+<rect x="780" y="210" width="200" height="210" rx="14" fill="#20232F" stroke="#2C303E" stroke-width="1.5"/>
+<rect x="780" y="210" width="4" height="210" rx="2" fill="#6FA8FF"/>
+<text x="798" y="244" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" fill="#6A7085">04</text>
+<text x="798" y="272" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="16.5" font-weight="700" fill="#E7E9F0">CROSS-MODEL</text>
+<text x="798" y="292" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="16.5" font-weight="700" fill="#E7E9F0">REVIEW</text>
+<text x="798" y="322" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#9CA2B4">a different model family</text>
+<text x="798" y="342" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#9CA2B4">audits the winner</text>
+<text x="798" y="398" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" letter-spacing="0.5" fill="#6A7085">BUILDER != REVIEWER</text>
+<line x1="986" y1="315" x2="1014" y2="315" stroke="#FF7A45" stroke-width="2" marker-end="url(#arw)" opacity="0.8"/>
+<rect x="1020" y="210" width="200" height="210" rx="14" fill="#20232F" stroke="#2C303E" stroke-width="1.5"/>
+<rect x="1020" y="210" width="4" height="210" rx="2" fill="#FF7A45"/>
+<text x="1038" y="244" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" fill="#6A7085">05</text>
+<text x="1038" y="272" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="16.5" font-weight="700" fill="#E7E9F0">PROMOTE</text>
+<text x="1038" y="302" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#9CA2B4">merge the one proven</text>
+<text x="1038" y="322" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#9CA2B4">attempt — discard rest</text>
+<text x="1038" y="398" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" letter-spacing="0.5" fill="#6A7085">ONLY PROOF SURVIVES</text>
+<text x="60" y="462" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="12.5" letter-spacing="1" fill="#6A7085">YOU GET&#8194;<tspan fill="#35D6A4">RunOutcome: SUCCESS</tspan>&#8194;+ proof-of-test evidence</text>
+<rect x="60" y="490" width="360" height="72" rx="12" fill="#181A24" stroke="#2C303E"/>
+<text x="76" y="516" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="11" letter-spacing="2" fill="#FF7A45">THE MUSCLE</text>
+<text x="76" y="542" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="15" fill="#E7E9F0">Local builder · Ollama/Kimi</text>
+<text x="406" y="542" text-anchor="end" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" fill="#35D6A4">$0 / round</text>
+<rect x="440" y="490" width="360" height="72" rx="12" fill="#181A24" stroke="#2C303E"/>
+<text x="456" y="516" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="11" letter-spacing="2" fill="#6FA8FF">THE CONDUCTOR</text>
+<text x="456" y="542" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="15" fill="#E7E9F0">Claude Code session</text>
+<rect x="840" y="490" width="116" height="72" rx="12" fill="#181A24" stroke="#2C303E"/>
+<text x="898" y="524" text-anchor="middle" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="22" font-weight="700" fill="#FF7A45">2</text>
+<text x="898" y="546" text-anchor="middle" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#9CA2B4">model families</text>
+<rect x="972" y="490" width="116" height="72" rx="12" fill="#181A24" stroke="#2C303E"/>
+<text x="1030" y="524" text-anchor="middle" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="22" font-weight="700" fill="#FF7A45">N</text>
+<text x="1030" y="546" text-anchor="middle" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#9CA2B4">verified attempts</text>
+<rect x="1104" y="490" width="116" height="72" rx="12" fill="#181A24" stroke="#2C303E"/>
+<text x="1162" y="524" text-anchor="middle" font-family="ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="22" font-weight="700" fill="#FF7A45">0</text>
+<text x="1162" y="546" text-anchor="middle" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#9CA2B4">network calls</text>
+</svg>
