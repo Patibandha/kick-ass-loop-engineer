@@ -22,6 +22,10 @@ or run the pipeline standalone from the CLI.
 
 ---
 
+*Three eras got us here: you engineered the **prompt**, then the **context** — this tool is the **loop**.*
+
+![The three eras of working with AI: prompt engineering → context engineering → loop engineering.](assets/three-eras.gif)
+
 ## The problem: you're the loop
 
 Work with an AI model the usual way and **you are the loop.** You prompt, read the output,
