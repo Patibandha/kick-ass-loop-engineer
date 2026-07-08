@@ -1,0 +1,47 @@
+# loop-engineer configuration (set once at skill install time).
+# The builder runs every round; in the Claude Code skill workflow the SESSION
+# reviews, so a reviewer provider is only needed for standalone `loop-engineer run`.
+# No API keys are used: the ollama provider talks to the local daemon
+# (localhost:11434, $0 cost); a `:cloud` tag is served via your ollama.com login on
+# the daemon (set up once with `ollama signin`). ANTHROPIC_API_KEY is never used.
+
+builder:
+  provider: ollama            # claude_code | ollama | anthropic
+  model: kimi-k2.7-code:cloud  # any pulled Ollama tag
+  host: http://localhost:11434
+
+reviewer:                      # cross-model reviewer for `loop-engineer run` (family must differ from the builder)
+  provider: ollama
+  model: qwen2.5
+
+guardrails:
+  max_file_bytes: 1000000
+  max_files_per_round: 50
+  allow_overwrite: true
+
+# gates:                       # verifier gate for the pipeline (defaults shown)
+#   name: unit                 # unit|security|data_leak|performance|smoke
+#   cmd: "python3 -m pytest -q"  # must be on the verification allowlist
+#   prove: true                # proof-of-test: revert->red->green
+
+# --- 1.0 settings below are OPTIONAL; the shown values are the defaults that apply
+# --- even if you delete these sections. Uncomment to change them.
+
+# ensemble:                    # competing attempts per hard slice (verified selection)
+#   n: 2
+
+# models:                      # cross-model review: builder != reviewer family
+#   builder: kimi-k2.7-code:cloud
+#   reviewer: qwen2.5           # different family from the builder; `ollama pull qwen2.5`
+#   arbiter: claude             # the MC session arbitrates on risk/ambiguity
+
+# ledger:                      # cost ledger ($ hard cap per run + advisory monthly)
+#   run_cap_usd: 10            # hard per-run cap
+#   month_cap_usd: 200         # advisory monthly ledger (warns at 80%)
+#   path: .loop-engineer/ledger.json
+
+# notify:                      # ping on escalation + terminal state (unattended runs)
+#   # ntfy.sh (free, no account):
+#   command: 'curl -s -d @- ntfy.sh/your-topic'
+#   # or a webhook (Telegram bot, Slack, etc.):
+#   # webhook: https://example.com/hook

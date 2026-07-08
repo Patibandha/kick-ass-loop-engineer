@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+workspace/
+out/
+*.log
+.pytest_cache/
+.coverage
+.DS_Store
+
+# machine-specific live config (use loopforge.example.yaml as template)
+loop-engineer.yaml
