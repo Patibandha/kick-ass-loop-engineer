@@ -116,5 +116,61 @@ def test_generate_slices_falls_back_on_malformed_item(text):
     _assert_fallback(slices)
 
 
+def test_on_usage_receives_provider_result_on_successful_parse():
+    text = '[{"role": "core", "objective": "todo storage"}]'
+    seen = []
+    slices = generate_slices(OBJ, _builder(text), on_usage=seen.append)
+    assert [s.role for s in slices] == ["core"]
+    assert len(seen) == 1
+    assert seen[0].text == text
+
+
+def test_on_usage_fires_on_parse_fallback():
+    # The call completed (tokens were spent) even though parsing fell back.
+    seen = []
+    slices = generate_slices(OBJ, _builder("I cannot produce JSON, sorry"),
+                             on_usage=seen.append)
+    _assert_fallback(slices)
+    assert len(seen) == 1
+
+
+def test_generate_slices_with_design_adds_design_section_and_instruction():
+    text = '[{"role": "core", "objective": "todo storage"}]'
+    provider = FakeProvider([text])
+    design = "# Design\n- core: storage component"
+    slices = generate_slices(OBJ, Builder(provider), design_md=design)
+    assert [s.role for s in slices] == ["core"]
+    _system, user = provider.calls[0]
+    assert "DESIGN:" in user
+    assert design in user
+    assert "reference the design components" in user
+
+
+def test_generate_slices_default_prompt_is_byte_identical_to_today():
+    text = '[{"role": "core", "objective": "todo storage"}]'
+    provider = FakeProvider([text])
+    generate_slices(OBJ, Builder(provider))
+    _system, user = provider.calls[0]
+    expected = (f"OBJECTIVE:\n{OBJ.goal}\n\nDONE WHEN:\n{OBJ.done_when}\n\n"
+                "Decompose into role slices as instructed.")
+    assert user == expected
+    assert "DESIGN:" not in user
+
+
+def test_on_usage_fires_with_design_md():
+    text = '[{"role": "core", "objective": "todo storage"}]'
+    seen = []
+    generate_slices(OBJ, _builder(text), design_md="# d", on_usage=seen.append)
+    assert len(seen) == 1
+
+
+def test_on_usage_not_called_on_transport_failure():
+    # The provider raised: no completed call, nothing to ledger.
+    seen = []
+    slices = generate_slices(OBJ, Builder(_RaisingProvider([])), on_usage=seen.append)
+    _assert_fallback(slices)
+    assert seen == []
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

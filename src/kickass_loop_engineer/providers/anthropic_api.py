@@ -13,7 +13,7 @@ import urllib.error
 import urllib.request
 from typing import Optional
 
-from .base import Provider, ProviderError, ProviderResult
+from .base import Provider, ProviderError, ProviderResult, as_int
 
 _ENDPOINT = "https://api.anthropic.com/v1/messages"
 _API_VERSION = "2023-06-01"
@@ -79,5 +79,13 @@ class AnthropicProvider(Provider):
             block.get("text", "") for block in body.get("content", []) if block.get("type") == "text"
         )
         usage = body.get("usage") or {}
-        tokens = int(usage.get("input_tokens", 0)) + int(usage.get("output_tokens", 0))
-        return ProviderResult(text=text, tokens=tokens, cost_usd=0.0, model=self.model)
+        prompt_tokens = as_int(usage.get("input_tokens"))
+        completion_tokens = as_int(usage.get("output_tokens"))
+        return ProviderResult(
+            text=text,
+            tokens=prompt_tokens + completion_tokens,
+            cost_usd=0.0,
+            model=self.model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )

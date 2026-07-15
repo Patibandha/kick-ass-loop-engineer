@@ -13,6 +13,25 @@ import abc
 from dataclasses import dataclass
 
 
+def as_int(value) -> int:
+    """Coerce a usage count that may be null/absent/non-numeric to a safe int.
+
+    Backends occasionally report token counts as ``null``, strings, or omit
+    them entirely; a bare ``int(...)`` would raise on those. Any value that
+    cannot be coerced counts as zero.
+
+    Args:
+        value: A raw usage count from a provider response.
+
+    Returns:
+        The value as an ``int``, or 0 when it is falsy or non-numeric.
+    """
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 @dataclass
 class ProviderResult:
     """The outcome of a single provider completion.
@@ -22,12 +41,16 @@ class ProviderResult:
         tokens: Total tokens consumed, when the backend reports them.
         cost_usd: Dollar cost of the call, when the backend reports it.
         model: Identifier of the model that produced the response.
+        prompt_tokens: Input-side tokens, when the backend reports the split.
+        completion_tokens: Output-side tokens, when the backend reports the split.
     """
 
     text: str
     tokens: int = 0
     cost_usd: float = 0.0
     model: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 class Provider(abc.ABC):

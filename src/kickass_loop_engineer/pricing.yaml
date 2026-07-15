@@ -1,0 +1,16 @@
+# EDITABLE DATA — per-Mtok USD rates; verify at release time; override via ledger.pricing_path or an inline pricing: map in loop-engineer.yaml.
+# Keys are longest-prefix matched against the configured model id (case-insensitive):
+# a specific row (gpt-5.5) wins over its family row (gpt-). Approximate mid-2026 rates.
+gpt-5.5: {in: 1.25, out: 10.0, context_window: 400000}
+gpt-: {in: 2.5, out: 10.0, context_window: 128000}
+claude-opus-4: {in: 15.0, out: 75.0, context_window: 200000}
+claude-sonnet-4: {in: 3.0, out: 15.0, context_window: 200000}
+claude-haiku-4: {in: 0.8, out: 4.0, context_window: 200000}
+claude-: {in: 3.0, out: 15.0, context_window: 200000}
+gemini-: {in: 1.25, out: 10.0, context_window: 1000000}
+deepseek-: {in: 0.28, out: 1.1, context_window: 128000}
+mistral-: {in: 2.0, out: 6.0, context_window: 128000}
+grok-: {in: 3.0, out: 15.0, context_window: 256000}
+qwen: {in: 0.0, out: 0.0, context_window: 128000}
+kimi: {in: 0.0, out: 0.0, context_window: 256000}
+llama: {in: 0.0, out: 0.0, context_window: 128000}

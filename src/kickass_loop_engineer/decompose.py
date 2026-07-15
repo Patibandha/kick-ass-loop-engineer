@@ -192,7 +192,8 @@ def _fallback(objective) -> list:
     return [RoleSlice(role="build", objective=objective.goal)]
 
 
-def generate_slices(objective, builder, max_slices: int = 5) -> list:
+def generate_slices(objective, builder, max_slices: int = 5, on_usage=None,
+                    design_md: str = "") -> list:
     """Ask the builder model to decompose *objective* into validated role slices.
 
     The builder's reply must contain a JSON array of slice objects. On any
@@ -208,6 +209,15 @@ def generate_slices(objective, builder, max_slices: int = 5) -> list:
         An ``agents.Builder``; its provider does the completion.
     max_slices:
         Hard cap on accepted slice count.
+    on_usage:
+        Optional callback receiving the raw ``ProviderResult`` of every
+        COMPLETED provider call (even when parsing falls back — tokens were
+        spent either way). Not invoked when the call itself fails.
+    design_md:
+        Optional architect design document. When non-empty, the prompt gains
+        a ``DESIGN:`` section carrying it plus an instruction that every
+        slice reference the design components it implements; when empty (the
+        default) the prompt is byte-identical to the design-free form.
 
     Returns
     -------
@@ -216,8 +226,16 @@ def generate_slices(objective, builder, max_slices: int = 5) -> list:
     """
     prompt = (f"OBJECTIVE:\n{objective.goal}\n\nDONE WHEN:\n{objective.done_when}\n\n"
               "Decompose into role slices as instructed.")
+    if design_md:
+        prompt += (
+            f"\n\nDESIGN:\n{design_md}\n\n"
+            "Each slice's objective MUST reference the design components it implements."
+        )
     try:
-        text = builder.provider.complete(SLICE_SYSTEM, prompt).text or ""
+        result = builder.provider.complete(SLICE_SYSTEM, prompt)
+        if on_usage is not None:
+            on_usage(result)
+        text = result.text or ""
     except Exception as exc:  # ProviderError or transport failure: fallback, never crash
         logger.warning("slice generation failed (%s); using single-slice fallback", exc)
         return _fallback(objective)

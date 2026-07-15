@@ -5,7 +5,7 @@ import os
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from kickass_loop_engineer.cli import build_parser, main
@@ -41,6 +41,98 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["gate"], "unit")
         self.assertIn("passed", payload)
         self.assertEqual(rc, 0 if payload["passed"] else 2)
+
+
+class InitUiTests(unittest.TestCase):
+    def _init(self, tmp, extra=()):
+        path = os.path.join(tmp, "loop-engineer.yaml")
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = main(["init", "--path", path, *extra])
+        return rc, path, err.getvalue()
+
+    def test_plain_init_output_is_byte_identical_to_example_config(self):
+        from kickass_loop_engineer.config import EXAMPLE_CONFIG
+        tmp = tempfile.mkdtemp()
+        rc, path, _ = self._init(tmp)
+        self.assertEqual(rc, 0)
+        self.assertEqual(open(path, encoding="utf-8").read(), EXAMPLE_CONFIG)
+        self.assertFalse(os.path.exists(os.path.join(tmp, "playwright.config.ts")))
+        self.assertFalse(os.path.exists(os.path.join(tmp, "tests-ui")))
+
+    def test_plain_init_refuses_existing_file(self):
+        tmp = tempfile.mkdtemp()
+        path = os.path.join(tmp, "loop-engineer.yaml")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("sentinel")
+        rc, _, err = self._init(tmp)
+        self.assertEqual(rc, 1)
+        self.assertEqual(open(path, encoding="utf-8").read(), "sentinel")
+        self.assertIn("refusing", err)
+
+    def test_init_ui_writes_playwright_scaffold_files(self):
+        tmp = tempfile.mkdtemp()
+        rc, path, _ = self._init(tmp, ["--ui"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(os.path.exists(path))
+        self.assertTrue(os.path.exists(os.path.join(tmp, "playwright.config.ts")))
+        self.assertTrue(os.path.exists(os.path.join(tmp, "tests-ui", "smoke.spec.ts")))
+
+    def test_init_ui_yaml_parses_to_unit_plus_ui_gates(self):
+        import yaml
+        from kickass_loop_engineer.config import parse_gates
+        tmp = tempfile.mkdtemp()
+        rc, path, _ = self._init(tmp, ["--ui"])
+        self.assertEqual(rc, 0)
+        specs = parse_gates(yaml.safe_load(open(path, encoding="utf-8").read()))
+        self.assertEqual([s.name for s in specs], ["unit", "ui"])
+        self.assertEqual(specs[1].command, "npx playwright test")
+        self.assertEqual(specs[1].observe,
+                         "npx playwright-cli snapshot http://localhost:3000")
+
+    def test_smoke_spec_covers_load_key_element_console_and_axe(self):
+        tmp = tempfile.mkdtemp()
+        self._init(tmp, ["--ui"])
+        spec = open(os.path.join(tmp, "tests-ui", "smoke.spec.ts"),
+                    encoding="utf-8").read()
+        self.assertIn("KEY_ELEMENT", spec)          # documented placeholder selector
+        self.assertIn("edit", spec.lower())          # ...the user is told to edit
+        self.assertIn("toBeVisible", spec)           # key-element visibility assertion
+        self.assertIn("console", spec)               # no-console-errors assertion
+        self.assertIn("AxeBuilder", spec)            # axe-core a11y check
+        self.assertIn("violations", spec)
+
+    def test_playwright_config_targets_tests_ui_and_localhost_3000(self):
+        tmp = tempfile.mkdtemp()
+        self._init(tmp, ["--ui"])
+        config = open(os.path.join(tmp, "playwright.config.ts"),
+                      encoding="utf-8").read()
+        self.assertIn("tests-ui", config)
+        self.assertIn("http://localhost:3000", config)
+
+    def test_init_ui_skips_existing_scaffold_file_with_warning(self):
+        tmp = tempfile.mkdtemp()
+        sentinel_path = os.path.join(tmp, "playwright.config.ts")
+        with open(sentinel_path, "w", encoding="utf-8") as handle:
+            handle.write("sentinel")
+        rc, path, err = self._init(tmp, ["--ui"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(open(sentinel_path, encoding="utf-8").read(), "sentinel")
+        self.assertIn("playwright.config.ts", err)
+        # the other files are still written
+        self.assertTrue(os.path.exists(path))
+        self.assertTrue(os.path.exists(os.path.join(tmp, "tests-ui", "smoke.spec.ts")))
+
+    def test_init_ui_skips_existing_config_with_warning(self):
+        tmp = tempfile.mkdtemp()
+        path = os.path.join(tmp, "loop-engineer.yaml")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("sentinel")
+        rc, _, err = self._init(tmp, ["--ui"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(open(path, encoding="utf-8").read(), "sentinel")
+        self.assertIn("loop-engineer.yaml", err)
+        self.assertTrue(os.path.exists(os.path.join(tmp, "tests-ui", "smoke.spec.ts")))
 
 
 class RunCliTests(unittest.TestCase):
@@ -224,6 +316,83 @@ class VersionConsistencyTests(unittest.TestCase):
         match = re.search(r'(?m)^version = "([^"]+)"', pyproj)
         self.assertIsNotNone(match, "pyproject.toml is missing a top-level version field")
         self.assertEqual(__version__, match.group(1))
+
+
+class _RunConfigCaptureMixin:
+    """Runs the CLI `run` command with a stub pipeline; returns the config it got."""
+
+    def _run_capture_config(self, extra_args, config_body=""):
+        tmp = tempfile.mkdtemp()
+        args = ["run", "--objective", "g", "--done-when", "d", "--workspace", tmp]
+        if config_body:
+            cfg_path = os.path.join(tmp, "cfg.yaml")
+            with open(cfg_path, "w", encoding="utf-8") as handle:
+                handle.write(config_body)
+            args += ["--config", cfg_path]
+        stub = mock.Mock()
+        stub.run.return_value = RunOutcome(TerminalState.SUCCESS, "ok", evidence=[{}])
+        with mock.patch("kickass_loop_engineer.cli.build_orchestrator",
+                        return_value=stub) as factory:
+            with redirect_stdout(io.StringIO()):
+                rc = main(args + extra_args)
+        self.assertEqual(rc, 0)
+        return factory.call_args[0][0]
+
+
+class ArchitectFlagTests(_RunConfigCaptureMixin, unittest.TestCase):
+    def test_architect_flag_sets_config_on(self):
+        config = self._run_capture_config(["--architect"])
+        self.assertEqual(config.get("architect"), "on")
+
+    def test_no_architect_flag_sets_config_off(self):
+        config = self._run_capture_config(["--no-architect"])
+        self.assertEqual(config.get("architect"), "off")
+
+    def test_architect_flag_overrides_config_file_value(self):
+        config = self._run_capture_config(["--architect"],
+                                          config_body='architect: "off"\n')
+        self.assertEqual(config.get("architect"), "on")
+
+    def test_no_architect_flag_overrides_config_file_value(self):
+        config = self._run_capture_config(["--no-architect"],
+                                          config_body='architect: "on"\n')
+        self.assertEqual(config.get("architect"), "off")
+
+    def test_absent_flags_leave_config_untouched(self):
+        config = self._run_capture_config([])
+        self.assertNotIn("architect", config)
+
+    def test_architect_flags_are_mutually_exclusive(self):
+        with self.assertRaises(SystemExit) as ctx:
+            build_parser().parse_args(
+                ["run", "--objective", "g", "--done-when", "d",
+                 "--architect", "--no-architect"])
+        self.assertEqual(ctx.exception.code, 2)
+
+
+class ModeFlagTests(_RunConfigCaptureMixin, unittest.TestCase):
+    """`run --mode` mirrors the --architect override semantics."""
+
+    def test_mode_flag_sets_config_mode(self):
+        for mode in ("auto", "build", "enhance", "fix", "audit"):
+            config = self._run_capture_config(["--mode", mode])
+            self.assertEqual(config.get("mode"), mode)
+
+    def test_mode_flag_overrides_config_file_value(self):
+        config = self._run_capture_config(["--mode", "build"],
+                                          config_body='mode: "enhance"\n')
+        self.assertEqual(config.get("mode"), "build")
+
+    def test_absent_mode_flag_leaves_config_untouched(self):
+        config = self._run_capture_config([])
+        self.assertNotIn("mode", config)
+
+    def test_mode_flag_rejects_unknown_choice(self):
+        with self.assertRaises(SystemExit) as ctx:
+            build_parser().parse_args(
+                ["run", "--objective", "g", "--done-when", "d",
+                 "--mode", "refactor"])
+        self.assertEqual(ctx.exception.code, 2)
 
 
 if __name__ == "__main__":

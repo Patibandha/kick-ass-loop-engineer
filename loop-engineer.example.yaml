@@ -6,9 +6,20 @@
 # the daemon (set up once with `ollama signin`). ANTHROPIC_API_KEY is never used.
 
 builder:
-  provider: ollama            # claude_code | ollama | anthropic
+  provider: ollama            # claude_code | ollama | anthropic | openai_compat
   model: kimi-k2.7-code:cloud  # any pulled Ollama tag
   host: http://localhost:11434
+
+# builder:                     # ALTERNATIVE: any OpenAI-compatible /chat/completions endpoint
+#   provider: openai_compat
+#   model: gpt-5.5
+#   base_url: https://api.openai.com/v1
+#   # base_url: https://generativelanguage.googleapis.com/v1beta/openai  # Gemini
+#   # base_url: https://openrouter.ai/api/v1                             # OpenRouter
+#   # base_url: http://localhost:11434/v1                                # local Ollama
+#   api_key_env: OPENAI_API_KEY  # NAME of the env var holding the key — never the key itself
+#   family: gpt                # third-party/unknown models MUST declare a family so
+#                              # cross-model review independence can be enforced
 
 reviewer:                      # cross-model reviewer for `loop-engineer run` (family must differ from the builder)
   provider: ollama
@@ -18,17 +29,62 @@ guardrails:
   max_file_bytes: 1000000
   max_files_per_round: 50
   allow_overwrite: true
+#   extra_verify_prefixes:     # extend the verification allowlist — MUST be a
+#     - "mytool check"         # list (scalars are rejected). WARNING: these run
+#                              # with gate authority; every use logs a warning.
 
-# gates:                       # verifier gate for the pipeline (defaults shown)
-#   name: unit                 # unit|security|data_leak|performance|smoke
-#   cmd: "python3 -m pytest -q"  # must be on the verification allowlist
-#   prove: true                # proof-of-test: revert->red->green
+# gates:                       # verifier gates, run in order (default: one unit gate)
+#   - name: unit               # unit|security|data_leak|performance|smoke|ui|architecture
+#     cmd: "python3 -m pytest -q"  # must be on the verification allowlist
+#     prove: true              # proof-of-test: revert->red->green
+#   - name: security
+#     cmd: "bandit -r ."
+#     prove: false
+#   - name: ui
+#     cmd: "npx playwright test"
+#     observe: "npx playwright-cli snapshot http://localhost:3000"  # runs when the gate
+#                              # FAILS (same allowlist authority, 30s/8KB caps); the
+#                              # captured output feeds the builder's retry context
+
+# visual:                      # ADVISORY VLM screenshot critique, run after gates pass
+#   screenshot_cmd: "npx playwright-cli screenshot http://localhost:3000 shot.png"
+#                              # allowlisted; the LAST token names the image it writes
+#   provider:                  # NESTED provider section, standard form (vision model)
+#     provider: ollama         # claude_code | ollama | anthropic | openai_compat
+#     model: llava
+#                              # findings are advisory only (VLM visual judgment is
+#                              # ~50% accurate pairwise): they feed review feedback,
+#                              # NEVER a pass/fail verdict — gates alone decide that
+
+# format_retries: 1            # corrective re-calls per round when a builder/reviewer
+#                              # reply is non-empty but malformed (0 disables)
+
+# architect: auto              # design-first architect stage: auto | on | off.
+#                              # auto (default) = smart trigger: decompose runs FIRST,
+#                              # and only a 2+-slice objective triggers the architect
+#                              # (validated design.md, then re-decompose against it);
+#                              # on = always architect, even single-slice; off = never.
+#                              # CLI --architect / --no-architect override this value.
+
+# mode: auto                   # task mode: auto | build | enhance | fix | audit.
+#                              # auto (default) detects: git-tracked files in the
+#                              # workspace -> enhance (repo map + relevant existing
+#                              # files ride every brief), none -> build (greenfield).
+#                              # fix (reproduce-first bugfix) and audit (read-only
+#                              # findings sweep) are NEVER auto-detected — request
+#                              # them here or with `run --mode`.
 
 # --- 1.0 settings below are OPTIONAL; the shown values are the defaults that apply
 # --- even if you delete these sections. Uncomment to change them.
 
 # ensemble:                    # competing attempts per hard slice (verified selection)
-#   n: 2
+#   n: 2                       # attempts vary by an auto temperature ladder:
+#                              # 0.2, 0.7, 1.0, then +0.3 steps capped at 1.5
+#   attempts:                  # OR explicit per-attempt specs — n is derived from
+#     - model: kimi-k2.7-code:cloud  # this list (ensemble.n is then ignored);
+#       temperature: 0.9       # keys per attempt: model, temperature, provider,
+#     - model: llama3.3        # family. Every attempt must stay cross-family
+#                              # with the reviewer (checked before any spend).
 
 # models:                      # cross-model review: builder != reviewer family
 #   builder: kimi-k2.7-code:cloud
@@ -39,6 +95,9 @@ guardrails:
 #   run_cap_usd: 10            # hard per-run cap
 #   month_cap_usd: 200         # advisory monthly ledger (warns at 80%)
 #   path: .loop-engineer/ledger.json
+#   pricing_path: my-rates.yaml  # per-Mtok rate overrides on the bundled table
+#                              # (a top-level inline `pricing:` map also works);
+#                              # models with no pricing row cost $0 + a warning
 
 # notify:                      # ping on escalation + terminal state (unattended runs)
 #   # ntfy.sh (free, no account):
