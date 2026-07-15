@@ -1,7 +1,13 @@
 # tests/test_ensemble.py
 """Tests for ensemble verified selection."""
 import unittest
-from kickass_loop_engineer.ensemble import Attempt, select_winner, run_ensemble
+from kickass_loop_engineer.ensemble import (
+    Attempt,
+    AttemptSpec,
+    default_specs,
+    run_ensemble,
+    select_winner,
+)
 
 
 def _ev(passed):
@@ -36,6 +42,41 @@ class RunEnsembleTests(unittest.TestCase):
         attempts = run_ensemble(2, build_fn, gate_fn)
         self.assertEqual(len(attempts), 2)
         self.assertEqual(select_winner(attempts).id, "1")
+
+
+class DefaultSpecsTests(unittest.TestCase):
+    def test_single_attempt_uses_the_low_baseline_temperature(self):
+        self.assertEqual(default_specs(1), [AttemptSpec(temperature=0.2)])
+
+    def test_three_attempts_follow_the_ladder(self):
+        self.assertEqual([s.temperature for s in default_specs(3)],
+                         [0.2, 0.7, 1.0])
+
+    def test_five_attempts_cap_at_one_point_five(self):
+        self.assertEqual([s.temperature for s in default_specs(5)],
+                         [0.2, 0.7, 1.0, 1.3, 1.5])
+
+    def test_specs_are_deterministic(self):
+        self.assertEqual(default_specs(4), default_specs(4))
+
+    def test_default_specs_carry_no_model_or_provider_override(self):
+        for spec in default_specs(3):
+            self.assertEqual(spec.model, "")
+            self.assertEqual(spec.provider, "")
+            self.assertEqual(spec.family, "")
+
+
+class RunEnsembleSpecsTests(unittest.TestCase):
+    def test_specs_are_attached_to_their_attempts(self):
+        specs = default_specs(2)
+        attempts = run_ensemble(2, lambda i: (f"/ws/{i}", 1),
+                                lambda ws: _ev(True), specs=specs)
+        self.assertEqual([a.spec for a in attempts], specs)
+
+    def test_without_specs_attempt_spec_stays_none(self):
+        attempts = run_ensemble(2, lambda i: (f"/ws/{i}", 1),
+                                lambda ws: _ev(True))
+        self.assertEqual([a.spec for a in attempts], [None, None])
 
 
 if __name__ == "__main__":

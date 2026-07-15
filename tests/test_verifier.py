@@ -3,8 +3,14 @@ import os
 import subprocess
 import tempfile
 import unittest
+from dataclasses import dataclass, field
 
-from kickass_loop_engineer.verifier import prove, ProofRecord, run_gate, EvidenceRecord
+from kickass_loop_engineer.gates import GateSpec
+from kickass_loop_engineer.guardrails import VerificationPolicy, VerificationResult
+from kickass_loop_engineer.verifier import (
+    prove, ProofRecord, run_gate, run_gates, EvidenceRecord, GatesResult,
+    OBSERVER_CAP, OBSERVER_TIMEOUT_SECONDS,
+)
 
 
 def _git(cwd, *args):
@@ -128,6 +134,223 @@ class ProofRobustnessTests(unittest.TestCase):
         self.assertTrue(record.aborted)
         self.assertIn("stash", record.error)
         self.assertFalse(record.proven)
+
+
+class RunGatesTests(unittest.TestCase):
+    """Fail-fast multi-gate runner; the underlying run_gate is faked."""
+
+    def setUp(self):
+        import kickass_loop_engineer.verifier as v
+        self.v = v
+        self.calls = []
+        self.real_run_gate = v.run_gate
+
+    def tearDown(self):
+        self.v.run_gate = self.real_run_gate
+
+    def _fake_run_gate(self, passes_by_gate):
+        def fake(name, command, workspace, with_proof=False, policy=None):
+            self.calls.append({"name": name, "command": command, "workspace": workspace,
+                               "with_proof": with_proof, "policy": policy})
+            return EvidenceRecord(gate=name, command=command,
+                                  passed=passes_by_gate[name])
+        self.v.run_gate = fake
+
+    def test_all_gates_green_passes_with_records_in_spec_order(self):
+        self._fake_run_gate({"unit": True, "smoke": True})
+        result = run_gates([GateSpec(name="unit", command="pytest -q"),
+                            GateSpec(name="smoke", command="make test")],
+                           workspace="/ws")
+        self.assertIsInstance(result, GatesResult)
+        self.assertTrue(result.passed)
+        self.assertEqual([r.gate for r in result.records], ["unit", "smoke"])
+
+    def test_first_gate_failure_stops_before_second_gate_runs(self):
+        self._fake_run_gate({"unit": False, "smoke": True})
+        result = run_gates([GateSpec(name="unit", command="pytest -q"),
+                            GateSpec(name="smoke", command="make test")],
+                           workspace="/ws")
+        self.assertFalse(result.passed)
+        self.assertEqual([r.gate for r in result.records], ["unit"])
+        self.assertEqual(len(self.calls), 1)  # fail-fast: smoke never ran
+
+    def test_to_dict_wraps_verdict_and_per_gate_record_dicts(self):
+        self._fake_run_gate({"unit": True, "smoke": True})
+        result = run_gates([GateSpec(name="unit", command="pytest -q"),
+                            GateSpec(name="smoke", command="make test")],
+                           workspace="/ws")
+        d = result.to_dict()
+        self.assertEqual(d, {"passed": True,
+                             "gates": [r.to_dict() for r in result.records]})
+
+    def test_empty_spec_list_never_passes_vacuously(self):
+        self._fake_run_gate({})
+        result = run_gates([], workspace="/ws")
+        self.assertFalse(result.passed)
+        self.assertEqual(result.to_dict(), {"passed": False, "gates": []})
+
+    def test_per_gate_prove_flag_reaches_the_runner(self):
+        self._fake_run_gate({"unit": True, "smoke": True})
+        run_gates([GateSpec(name="unit", command="pytest -q", prove=True),
+                   GateSpec(name="smoke", command="make test", prove=False)],
+                  workspace="/ws")
+        self.assertEqual([c["with_proof"] for c in self.calls], [True, False])
+
+    def test_policy_is_threaded_to_every_gate_run(self):
+        self._fake_run_gate({"unit": True, "smoke": True})
+        sentinel = object()
+        run_gates([GateSpec(name="unit", command="pytest -q"),
+                   GateSpec(name="smoke", command="make test")],
+                  workspace="/ws", policy=sentinel)
+        self.assertEqual([c["policy"] for c in self.calls], [sentinel, sentinel])
+
+
+@dataclass
+class _ObserverStubPolicy(VerificationPolicy):
+    """Records every run; mutable fields survive the dataclasses.replace clone."""
+
+    log: list = field(default_factory=list)
+    stdout: str = "A11Y TREE: button 'Save' visible"
+    stderr: str = ""
+    error: str = ""
+
+    def run(self, command, cwd):
+        self.log.append({"command": command, "cwd": cwd,
+                         "timeout": self.timeout_seconds,
+                         "tail_chars": self.tail_chars,
+                         "prefixes": self.allowed_prefixes})
+        if self.error:
+            return VerificationResult(passed=False, command=command, error=self.error)
+        return VerificationResult(passed=True, command=command, returncode=0,
+                                  stdout_tail=self.stdout, stderr_tail=self.stderr)
+
+
+@dataclass
+class _ExplodingPolicy(VerificationPolicy):
+    """A policy whose run always raises — the observer must swallow it."""
+
+    def run(self, command, cwd):
+        raise RuntimeError("boom")
+
+
+class ObserverTests(unittest.TestCase):
+    """Failing gates run their observe command — the eyes for the retry loop."""
+
+    OBSERVE = "npx playwright-cli snapshot http://localhost:3000"
+
+    def setUp(self):
+        import kickass_loop_engineer.verifier as v
+        self.v = v
+        self.gate_calls = []
+        self.real_run_gate = v.run_gate
+
+    def tearDown(self):
+        self.v.run_gate = self.real_run_gate
+
+    def _fake_run_gate(self, passes_by_gate):
+        def fake(name, command, workspace, with_proof=False, policy=None):
+            self.gate_calls.append(name)
+            return EvidenceRecord(gate=name, command=command,
+                                  passed=passes_by_gate[name])
+        self.v.run_gate = fake
+
+    def test_failing_gate_with_observe_runs_observer_via_policy(self):
+        self._fake_run_gate({"ui": False})
+        policy = _ObserverStubPolicy(allowed_prefixes=("npx",))
+        result = run_gates([GateSpec(name="ui", command="npx playwright test",
+                                     prove=False, observe=self.OBSERVE)],
+                           workspace="/ws", policy=policy)
+        self.assertFalse(result.passed)
+        self.assertEqual(result.records[-1].observed, policy.stdout)
+        self.assertEqual(len(policy.log), 1)
+        call = policy.log[0]
+        self.assertEqual(call["command"], self.OBSERVE)
+        self.assertEqual(call["cwd"], "/ws")
+        self.assertEqual(call["timeout"], OBSERVER_TIMEOUT_SECONDS)
+        self.assertEqual(call["tail_chars"], OBSERVER_CAP)
+        self.assertEqual(call["prefixes"], ("npx",))  # SAME allowlist authority
+
+    def test_passing_gates_never_run_observer(self):
+        self._fake_run_gate({"ui": True})
+        policy = _ObserverStubPolicy()
+        result = run_gates([GateSpec(name="ui", command="npx playwright test",
+                                     prove=False, observe=self.OBSERVE)],
+                           workspace="/ws", policy=policy)
+        self.assertTrue(result.passed)
+        self.assertEqual(policy.log, [])
+        self.assertEqual(result.records[0].observed, "")
+
+    def test_failing_gate_without_observe_runs_no_observer(self):
+        self._fake_run_gate({"unit": False})
+        policy = _ObserverStubPolicy()
+        result = run_gates([GateSpec(name="unit", command="pytest -q",
+                                     prove=False)],
+                           workspace="/ws", policy=policy)
+        self.assertFalse(result.passed)
+        self.assertEqual(policy.log, [])
+        self.assertEqual(result.records[0].observed, "")
+
+    def test_observer_error_warns_and_leaves_observed_empty(self):
+        self._fake_run_gate({"ui": False})
+        policy = _ObserverStubPolicy(error="command not in verification allowlist")
+        with self.assertLogs("kickass_loop_engineer.verifier", level="WARNING"):
+            result = run_gates([GateSpec(name="ui", command="npx playwright test",
+                                         prove=False, observe=self.OBSERVE)],
+                               workspace="/ws", policy=policy)
+        self.assertFalse(result.passed)          # the gate failure still stands
+        self.assertEqual(result.records[-1].observed, "")
+
+    def test_observer_exception_never_crashes_the_run(self):
+        self._fake_run_gate({"ui": False})
+        with self.assertLogs("kickass_loop_engineer.verifier", level="WARNING"):
+            result = run_gates([GateSpec(name="ui", command="npx playwright test",
+                                         prove=False, observe=self.OBSERVE)],
+                               workspace="/ws", policy=_ExplodingPolicy())
+        self.assertFalse(result.passed)
+        self.assertEqual(result.records[-1].observed, "")
+
+    def test_observed_output_is_capped(self):
+        self._fake_run_gate({"ui": False})
+        policy = _ObserverStubPolicy(stdout="x" * (OBSERVER_CAP * 3))
+        result = run_gates([GateSpec(name="ui", command="npx playwright test",
+                                     prove=False, observe=self.OBSERVE)],
+                           workspace="/ws", policy=policy)
+        self.assertEqual(len(result.records[-1].observed), OBSERVER_CAP)
+
+    def test_stderr_tail_is_folded_into_observed(self):
+        self._fake_run_gate({"ui": False})
+        policy = _ObserverStubPolicy(stdout="dom snapshot",
+                                     stderr="console error: undefined is not a function")
+        result = run_gates([GateSpec(name="ui", command="npx playwright test",
+                                     prove=False, observe=self.OBSERVE)],
+                           workspace="/ws", policy=policy)
+        observed = result.records[-1].observed
+        self.assertIn("dom snapshot", observed)
+        self.assertIn("undefined is not a function", observed)
+
+    def test_fail_fast_unchanged_observer_runs_after_failing_gate(self):
+        self._fake_run_gate({"unit": False, "smoke": True})
+        policy = _ObserverStubPolicy()
+        result = run_gates([GateSpec(name="unit", command="pytest -q",
+                                     prove=False, observe="pytest --collect-only -q"),
+                            GateSpec(name="smoke", command="make test",
+                                     prove=False, observe=self.OBSERVE)],
+                           workspace="/ws", policy=policy)
+        self.assertEqual(self.gate_calls, ["unit"])   # smoke never ran
+        self.assertEqual(len(policy.log), 1)          # one observer, for the failure
+        self.assertEqual(policy.log[0]["command"], "pytest --collect-only -q")
+        self.assertEqual(result.records[-1].observed, policy.stdout)
+
+
+class EvidenceObservedSerializationTests(unittest.TestCase):
+    def test_to_dict_omits_observed_when_empty(self):
+        record = EvidenceRecord(gate="ui", command="npx playwright test", passed=False)
+        self.assertNotIn("observed", record.to_dict())
+
+    def test_to_dict_includes_observed_when_nonempty(self):
+        record = EvidenceRecord(gate="ui", command="npx playwright test",
+                                passed=False, observed="A11Y TREE")
+        self.assertEqual(record.to_dict()["observed"], "A11Y TREE")
 
 
 if __name__ == "__main__":

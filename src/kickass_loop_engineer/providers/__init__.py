@@ -13,11 +13,13 @@ from .anthropic_api import AnthropicProvider
 from .base import Provider, ProviderError, ProviderResult
 from .claude_code import ClaudeCodeProvider
 from .ollama import OllamaProvider
+from .openai_compat import OpenAICompatProvider
 
 PROVIDERS: dict[str, Type[Provider]] = {
     ClaudeCodeProvider.name: ClaudeCodeProvider,
     OllamaProvider.name: OllamaProvider,
     AnthropicProvider.name: AnthropicProvider,
+    OpenAICompatProvider.name: OpenAICompatProvider,
 }
 
 
@@ -48,6 +50,7 @@ __all__ = [
     "ClaudeCodeProvider",
     "OllamaProvider",
     "AnthropicProvider",
+    "OpenAICompatProvider",
     "PROVIDERS",
     "build_provider",
 ]

@@ -17,6 +17,272 @@ come from version control.
 
 ---
 
+## 3.0.0 — any model, verifiable everywhere (2026-07-15)
+
+**3.0.0 GA summary.** The 3.0 arc turns the verified 2.0 loop into a general,
+brownfield-ready engine that runs on *any* model and proves its work everywhere.
+**M1** made the verifier a gate LIST and opened the roster to any LLM — a native
+`openai_compat` provider (OpenAI, Gemini, Grok, DeepSeek, Mistral, Qwen, OpenRouter,
+Groq, Together, and local runtimes), pricing-backed budget caps, and format retries.
+**M2** added a design-first architect stage with deterministic Mermaid validation and
+executable architecture-conformance gates. **M3** gave text-only builders working
+"eyes" for browser work — `ui` gates, a failure observer, an `init --ui` scaffold, and
+a strictly-advisory VLM screenshot critique. **M4** made the pipeline brownfield-aware
+with `build`/`enhance`/`fix`/`audit` task modes (repo-context briefs, reproduce-first
+fixes, read-only audits). **M5**, this release, makes ensembles DIVERSE by construction
+(per-attempt temperature/model, gates still pick the winner), turns `events.jsonl` into
+a run journal that reconstructs any run post-hoc, and ships the engine over `uvx` with a
+real proof-of-test demo. The cross-model independence guard holds throughout — builder
+and reviewer never share a family, checked at config time and at review time.
+
+### M5 — ensemble diversity, run journal, release
+
+#### Added
+- **Diverse ensembles** (`ensemble.py`, `config.py`). Ensemble attempts now vary by
+  construction: an auto temperature ladder (`0.2, 0.7, 1.0`, then `+0.3` steps capped
+  at `1.5`) over `ensemble.n`, or an explicit `ensemble.attempts` list of
+  `{model, temperature?, provider?, family?}` (n derived from the list; `ensemble.n`
+  ignored with a warning). `AttemptSpec`/`default_specs` are deterministic — the same
+  `n` always yields the same specs. **Winner selection is unchanged: gates decide**;
+  diversity only changes how each attempt's builder is built. `claude_code`/`anthropic`
+  attempts strip temperature with a once-per-model warning and still run; every attempt
+  is wired to the ledger.
+- **Two-layer cross-model guard for diverse attempts.** (1) Config-time fail-fast:
+  `build_orchestrator` constructs every attempt spec's provider and rejects any attempt
+  sharing the reviewer's family *before any spend*. (2) Review-time invariant: the
+  WINNING attempt's constructed provider object (never a roster label) is re-checked
+  via a new `CrossModelReviewer` per-call API; a violation ends the run `BLOCKED` with
+  attempt worktrees cleaned up. Per-attempt `family:` declares independence for
+  third-party `openai_compat` attempts; two-unknown rejection stays.
+- **Run journal** (`cursor.py` event-only `emit`, orchestrator emissions). Additive
+  events on `events.jsonl` reconstruct a full run post-hoc: `attempt_started` (slice,
+  attempt index, spec model+temperature), `gate_result` (per gate per attempt: name,
+  ok, proven), `observer_ran` (gate, truncation flag), `format_retry` (stage), and
+  `cost_recorded` (call site, model, dollars). Cost events reconcile with the ledger
+  (the ledger stays the source of truth). Journal writes go only to `events.jsonl`,
+  never thrashing `pipeline.json`'s live stage; the journal is append-only and never
+  deduplicated, so consumers tolerate a resumed run's re-announced `mode_resolved`.
+- **Builder/reviewer format-retry hooks** (`session.py`, `agents.py`). An optional
+  `on_retry` callback fires exactly once per corrective format retry — builder-side in
+  `BuildSession.build_round`, reviewer-side in the reviewer — with no behavior change
+  when absent.
+- **`uvx` distribution + a real proof-of-test demo GIF.** The CLI runs under
+  `uvx --from <path|git+URL> loop-engineer` (pure stdlib + `pyyaml`, no install).
+  `scripts/make_demo_gif.py` records a REAL `loop-engineer verify --prove` run against
+  a throwaway repo and renders the revert→red→restore→green cycle as a terminal-style
+  GIF (`assets/proof-of-test-demo.gif`, <800KB) — grounded in the run's actual proof
+  record, re-runnable, embedded in the README.
+- **Import-purity test** (`tests/test_purity.py`) asserting the core imports stdlib +
+  lazy `pyyaml` only, and a **version-agreement test** (`tests/test_version.py`) pinning
+  `pyproject.toml` and `__version__` together.
+
+#### Changed
+- **Version 3.0.0** in `pyproject.toml` and `__init__.__version__`; project URLs point
+  at the public `github.com/Patibandha/kick-ass-loop-engineer` repo.
+
+#### Fixed
+- **M4 riders.** Audit-mode success no longer records `memory["verifier.proven"]`
+  (build/enhance/fix still do); `run_audit` takes a per-chunk `budget_check` that stops
+  a sweep cleanly with partial findings + a truncation note (an escalate-level
+  `audit_budget_stop` event; outcome stays SUCCESS); fix-mode briefs now compose repo
+  context (map + selected files) BEFORE `FIX_MODE_RULES`, same as enhance.
+
+### M4 — brownfield task modes
+
+#### Added
+- **Task modes** (`modes.py`): a run is `build` / `enhance` / `fix` / `audit`,
+  selected by config `mode:` (top-level, default `auto`) or CLI `run --mode`.
+  `auto` detects with one deliberately coarse signal — git-tracked files in the
+  workspace (`.loop-engineer/` excluded) → `enhance`, otherwise `build`; `fix`
+  and `audit` are NEVER auto-detected. The resolved mode is recorded on the
+  pipeline cursor (a resumed run keeps its recorded mode, with a warning when
+  this invocation resolved differently) and announced as a `mode_resolved` event.
+- **Repo orientation primitives** (`repomap.py`, stdlib only): `repo_map` (a
+  compact skeleton of the tracked files — `class`/`def` signatures, ranked by
+  import in-degree, 8,000-char budget), `select_files` (keyword-scored FULL
+  contents of the objective-relevant files, 24 KB budget, overflow files skipped
+  never truncated), and `assemble_context`, which closes with an update
+  instruction: these files EXIST — re-emit the complete updated file, don't drop
+  existing behavior.
+- **Enhance mode.** The repo context is assembled ONCE per run against the main
+  workspace and rides every slice's builder brief as a new `CONTEXT:` section
+  (`Objective.context`; an empty context keeps briefs byte-identical to 3.0-M3);
+  the raw repo map is also handed to the architect prompt. Resume re-assembles
+  against the current workspace by design (completed slices are already
+  promoted).
+- **Reproduce-first fix mode** (`reproduce.py`). The builder must emit ONE
+  minimal failing test at `tests/test_repro_<slug>.py`, verified RED with pytest
+  configuration disabled (`--noconftest -o addopts=`); a green repro gets one
+  corrective regeneration, then the run ends `BLOCKED` "cannot reproduce". The
+  ENGINE commits the repro before any fix attempt — proof-of-test stashes
+  uncommitted files, so an uncommitted repro would revert WITH the fix and "red"
+  would mean file-missing, not bug-back — and appends a `prove: true` proving
+  gate on the config-isolated repro command. Tamper hardening in code, not
+  prompts: `FIX_MODE_RULES` on every fix brief, pre-gate repro restore in every
+  attempt worktree, post-promote restore that fails CLOSED, and a
+  `tamper_detected` event on any detected edit. Slug collisions get a numeric
+  suffix; resume skips regeneration and re-arms the gate from the cursor's
+  durable `repro_path`.
+- **Read-only audit mode** (`audit.py`). A chunked reviewer sweep over the
+  selected files (4× the enhance selection budget; empty selection falls back to
+  ALL tracked files — an audit always sweeps), one ledgered reviewer call per
+  24 KB chunk, every finding carrying a file reference. Only `security`/
+  `data_leak`-category gates run, as neutralized copies (`prove: false`, no
+  observer); findings land in `.loop-engineer/findings.md` under an ADVISORY
+  header — only gate results make pass/fail claims. The run ends `SUCCESS` with
+  `"audit complete: N findings"`; nothing outside `.loop-engineer/` is written —
+  no worktrees, no promote.
+
+#### Changed
+- **Starter config** documents the top-level `mode:` key (default `auto`, all
+  five choices) and `loop-engineer.example.yaml` was regenerated from it.
+- **`parse_findings` promoted to a module-level function** (`agents.py`) — the
+  one shared `FINDING:` parser behind the reviewer, the visual critique, and the
+  audit sweep. `Reviewer._parse_findings` remains as a delegating staticmethod,
+  so no caller breaks; parsing behavior is unchanged.
+
+#### Fixed
+- **A stall no longer erases prior feedback.** Observer output captured when a
+  slice stalls now APPENDS to the feedback the next attempt/resumed run starts
+  from (bounded to the last 3 entries, the oscillation-history precedent)
+  instead of replacing what the previous review taught.
+
+---
+
+### M3 — UI gates + observer + visual critique
+
+#### Added
+- **Failing-gate observer — eyes for the retry loop.** A failing gate with an
+  `observe:` command runs it under the SAME authority as gates (allowlist +
+  metachar rejection + scrubbed env) with observer caps (30s timeout, 8KB output).
+  The captured output (e.g. a Playwright a11y-tree snapshot of the live page) lands
+  on the failing evidence record (`observed`) and verifiably reaches three places:
+  later attempts of the same ensemble slice (an `OBSERVED (gate: <name>):` block in
+  the next attempt's builder brief), next-slice feedback, and STALLED evidence. A
+  rejected/failed/timed-out observer logs a warning and contributes nothing — it
+  never crashes the run and never changes a gate verdict.
+- **Vision transport on `openai_compat`.** `complete()` gains an optional
+  `images=` parameter (file paths → base64 `image_url` content parts in the OpenAI
+  content-array shape; mime from extension, png default). Purely additive:
+  text-only calls send a byte-identical body; an unreadable image path raises
+  `ProviderError`.
+- **Advisory VLM screenshot critique** (`visual.py` + `visual:` config). After a
+  slice's gates pass, the allowlist-validated `screenshot_cmd` runs (its LAST token
+  names the output image) and a vision-capable provider critiques the screenshot
+  against the slice objective; `FINDING:` lines join the reviewer's advisory stream
+  (oscillation detection + next-slice feedback) and the call is ledgered. The
+  config takes a NESTED `visual.provider` section in the standard provider form
+  (deliberate deviation from the spec's flat sketch — reuses standard provider
+  construction). Advisory-only **by design** (~50% pairwise VLM accuracy on similar
+  UIs): never a gate, never a verdict, and any failure in the chain degrades to a
+  warning + zero findings. Absent `visual:` section → feature entirely off.
+- **`init --ui` Playwright scaffold.** Writes `playwright.config.ts` +
+  `tests-ui/smoke.spec.ts` (page loads, a documented `KEY_ELEMENT` placeholder
+  selector is visible, no console errors, axe-core a11y scan) and a config whose
+  gates list carries unit + ui (`npx playwright test`, snapshot observer at
+  `http://localhost:3000`). Existing files are skipped with a warning, never
+  overwritten; no npm/npx command is ever run; plain `init` output is unchanged.
+- **Conditional UI builder rules.** `UI_BUILDER_RULES` (semantic HTML +
+  accessibility, stable selectors, no console errors, reachable dev-server URL) is
+  appended to the builder SYSTEM prompt only when a `ui`-category gate is
+  configured; non-UI configs keep the prompt byte-identical.
+
+#### Changed
+- **Starter config** documents the `visual:` section (nested provider form) and the
+  ui gate's `observe:` comment now describes the live observer instead of pointing
+  at a future milestone.
+
+---
+
+### M2 — architect stage + diagrams + conformance
+
+#### Added
+- **Smart-triggered architect stage.** Decompose runs first; a 2+-slice objective
+  triggers one architect call that emits a validated `design.md` (Components /
+  Architecture / Primary flow / Decisions + a machine-readable `layering:` yaml
+  block), then decompose re-runs against the design. Config `architect: auto|on|off`
+  (default `auto`); CLI `run --architect`/`--no-architect` override. The call is
+  ledgered and budget-capped like every other provider call; resume never re-runs a
+  completed architect stage (and re-arms it with a warning if `design.md` went
+  missing). An unwritable `design.md` degrades with a warning — the in-memory design
+  still drives the re-decompose.
+- **Deterministic diagram validation.** Mermaid fences validate via optional
+  `npx --yes @probelabs/maid` (already allowlisted); validator errors drive a bounded
+  architect retry (2). No maid → stdlib sanity pre-check + SKIPPED with a visible
+  warning — never a silent pass, never a hard run failure.
+- **Architecture-conformance gate.** Declared `layering:` renders to `.importlinter`
+  and appends an implicit `architecture` gate (`lint-imports`, `prove: false`) when
+  the design declares layering AND the tool is on PATH AND the workspace is a Python
+  package; any missing precondition logs a SKIPPED warning. The engine-rendered
+  `.importlinter` is propagated into every attempt worktree.
+- **archmap auto-diagrams.** Each successful promote regenerates
+  `docs/architecture.mermaid.md` — a stdlib-`ast` module-dependency graph as Mermaid
+  `graph TD` (renders on GitHub). Best-effort: write failures warn, never fail the run.
+
+#### Fixed
+- **Spend honesty on corrective-retry failures.** When a builder/reviewer format
+  retry dies with a `ProviderError`, the completed first call's tokens/cost now ride
+  the exception (`partial_result`) and the orchestrator ledgers them — paid calls are
+  never lost to cost accounting.
+- **claude_code cwd misattribution.** A `FileNotFoundError` caused by a missing
+  working directory is now reported as `claude_code cwd does not exist: ...` instead
+  of being blamed on the claude binary.
+
+---
+
+### M1 — gate-list engine + any-LLM providers
+
+#### Added
+- **Gate lists.** `gates:` in config is now a LIST of `{name, cmd, prove?, observe?}`
+  entries the pipeline runs in order — fail-fast, with per-gate proof-of-test — per
+  attempt and at finalization. Back-compat preserved: the 1.0 single-mapping form
+  becomes a one-element list; an absent/empty section means the default unit gate.
+- **`ui` and `architecture` gate kinds**: browser DOM-assertion tests (Playwright) and
+  declared-architecture conformance (import-linter). A gate's `observe:` command is
+  parsed and stored in M1; the failing-gate observer that executes it lands in M3.
+- **Curated verification-allowlist additions + a warned escape hatch**: `npx playwright`,
+  `npx playwright-cli`, `npx --yes @probelabs/maid`, and `lint-imports` join the bundled
+  allowlist (curated entries — never a blanket `npx`). `guardrails.extra_verify_prefixes`
+  extends it from config; every use logs a WARNING naming the extras (they run with gate
+  authority), and a scalar value is rejected outright instead of being iterated
+  per-character into a silently widened allowlist.
+- **`openai_compat` provider** — any endpoint speaking OpenAI `/chat/completions`:
+  OpenAI, Gemini (its OpenAI layer), Grok, DeepSeek, Mistral, Qwen, OpenRouter, Groq,
+  Together, plus local runtimes (Ollama, llama.cpp server, LM Studio, vLLM). Stdlib-only;
+  the API key is read from an env var NAME (`api_key_env`) so secrets never live in
+  config, and key-less local runtimes work without an Authorization header.
+- **Prompt/completion token split** reported by every provider (null-safe usage
+  parsing), summed across format retries, so cost accounting works from real usage
+  instead of a single opaque total.
+- **Pricing-backed budget caps**: a bundled longest-prefix per-Mtok price table
+  (`pricing.yaml`), overlaid by an optional `ledger.pricing_path` file and an inline
+  `pricing:` map, prices every call so `run_cap_usd` binds even when the provider
+  reports no cost. Residual tokens the provider didn't attribute to either side are
+  charged at the OUTPUT rate — deliberately conservative, caps trip early rather than
+  undercount. A model with no pricing row counts as $0 and logs a warning.
+- **Format retries for builder and reviewer** (`format_retries`, default 1): a
+  non-empty reply that matches neither the FILE-block format (builder) nor
+  `FINDING:`/`NO FINDINGS` (reviewer) triggers up to N corrective re-calls restating
+  the exact format; retry usage is summed into the round's accounting. Empty replies
+  signal provider failure and are never retried.
+- **Config-declared model families**: a `family:` key on the `builder`/`reviewer`
+  sections satisfies the cross-model-review independence check for third-party models
+  the family detector can't classify. Declared families are UNVERIFIED user
+  assertions; same-family rejection semantics are unchanged.
+- **Builder context-window warning**: the builder's window is resolved from the
+  pricing table at wiring time and a WARNING naming the model, the estimated prompt
+  tokens (chars//4), and the window is logged when a round's prompt exceeds 75% of it.
+
+#### Changed
+- **`claude_code` reclassified as a frontier/dispatcher provider** — not a pipeline
+  builder: it edits files through its own tools and returns prose, not the FILE blocks
+  the build pipeline parses. It also gained a `cwd` argument pinning the subprocess to
+  a target workspace instead of inheriting the caller's directory.
+- **Starter config** (`loop-engineer init` / `loop-engineer.example.yaml`) documents
+  the 3.0 surface: an `openai_compat` builder alternative (with per-vendor `base_url`
+  examples), a gate-LIST example, `format_retries`, `ledger.pricing_path`, and
+  `guardrails.extra_verify_prefixes`.
+
 ## 2.0.0 — deep research + 2.0 GA
 
 **2.0.0 GA summary.** The 2.0 arc closes here: **M1** replaced the old transcript-graded
@@ -329,7 +595,7 @@ in `docs/specs/2026-06-25-loop-engineer-1.0-design.md`; the milestone plan in
 
 ## [0.2.0] — current
 ### Added
-- Session-as-orchestrator model: the Claude Code session drives review/iterate/report.
+- Master-Controller-as-session model: `/loopforge` skill drives review/iterate/report.
 - `loopforge build` (one guarded builder round, JSON out, stderr progress bar).
 - `loopforge verify` (allowlisted, metacharacter-rejecting verification).
 - Security guardrails: write policy (containment, protected paths, size/count caps) and

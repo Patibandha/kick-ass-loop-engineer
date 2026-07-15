@@ -30,9 +30,16 @@ import os
 import sys
 from datetime import datetime
 
-from .config import EXAMPLE_CONFIG, build_builder, build_orchestrator, load_config
+from .config import (
+    EXAMPLE_CONFIG,
+    UI_GATES_SNIPPET,
+    build_builder,
+    build_orchestrator,
+    load_config,
+)
 from .guardrails import VerificationPolicy, WritePolicy
 from .interview import SLOTS, next_questions
+from .modes import REQUESTABLE_MODES
 from .next import emit_next
 from .objective import Objective
 from .progress import ProgressReporter
@@ -42,6 +49,53 @@ from .session import BuildSession
 from .state import RunState
 from .terminal import TerminalState
 from .workspace import Workspace
+
+# Playwright scaffold written by `loop-engineer init --ui`. These are PROJECT
+# files (the project brings its own Playwright/Node deps); init never runs
+# npm/npx. Kept as constants so tests can assert exact generated content.
+PLAYWRIGHT_CONFIG_TS = """\
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './tests-ui',
+  use: {
+    baseURL: 'http://localhost:3000',
+  },
+  // Uncomment to have Playwright start your dev server for the ui gate:
+  // webServer: {
+  //   command: 'npm run dev',
+  //   url: 'http://localhost:3000',
+  //   reuseExistingServer: true,
+  // },
+});
+"""
+
+SMOKE_SPEC_TS = """\
+import { test, expect } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+
+// PLACEHOLDER — edit KEY_ELEMENT to a selector for your app's most important
+// element (e.g. '#app', '[data-testid="main-nav"]'); the smoke test asserts
+// it is visible after the page loads.
+const KEY_ELEMENT = 'main';
+
+test('page loads with the key element visible and no console errors', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') errors.push(msg.text());
+  });
+  await page.goto('/');
+  await expect(page.locator(KEY_ELEMENT)).toBeVisible();
+  expect(errors, `console errors:\\n${errors.join('\\n')}`).toEqual([]);
+});
+
+test('page has no automatically detectable accessibility violations', async ({ page }) => {
+  await page.goto('/');
+  const results = await new AxeBuilder({ page }).analyze();
+  expect(results.violations).toEqual([]);
+});
+"""
+
 
 def _read_feedback(args: argparse.Namespace) -> str:
     """Resolve feedback from an inline string or a file path."""
@@ -55,8 +109,51 @@ def _read_feedback(args: argparse.Namespace) -> str:
     return getattr(args, "feedback", "") or ""
 
 
+def _write_new_file(path: str, content: str) -> bool:
+    """Create ``path`` with ``content``; never overwrite (skip + warn).
+
+    Args:
+        path: Destination file path.
+        content: Full file contents to write.
+
+    Returns:
+        ``True`` when the file was written, ``False`` when it already existed.
+
+    Raises:
+        OSError: On any write failure other than the file already existing.
+    """
+    try:
+        with open(path, "x", encoding="utf-8") as handle:
+            handle.write(content)
+    except FileExistsError:
+        print(f"skipping existing file: {path}", file=sys.stderr)
+        return False
+    print(f"wrote {path}")
+    return True
+
+
 def _cmd_init(args: argparse.Namespace) -> int:
-    """Write a starter configuration file to the given path."""
+    """Write a starter configuration file (plus a Playwright scaffold with ``--ui``).
+
+    Plain ``init`` refuses to overwrite an existing config. With ``--ui``, the
+    config gains an uncommented unit + ui gates list, and ``playwright.config.ts``
+    / ``tests-ui/smoke.spec.ts`` are scaffolded next to it — every file is
+    created fresh only; existing files are skipped with a warning, never
+    overwritten. No npm/npx command is ever run.
+    """
+    if getattr(args, "ui", False):
+        root = os.path.dirname(args.path) or "."
+        try:
+            _write_new_file(args.path, EXAMPLE_CONFIG + UI_GATES_SNIPPET)
+            _write_new_file(os.path.join(root, "playwright.config.ts"),
+                            PLAYWRIGHT_CONFIG_TS)
+            tests_dir = os.path.join(root, "tests-ui")
+            os.makedirs(tests_dir, exist_ok=True)
+            _write_new_file(os.path.join(tests_dir, "smoke.spec.ts"), SMOKE_SPEC_TS)
+        except OSError as exc:
+            print(f"failed to write scaffold: {exc}", file=sys.stderr)
+            return 1
+        return 0
     try:
         with open(args.path, "x", encoding="utf-8") as handle:
             handle.write(EXAMPLE_CONFIG)
@@ -95,6 +192,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
         total_rounds=args.max_rounds,
         progress=ProgressReporter(args.max_rounds, events_path=f"{workspace.root}/.loop-engineer/events.jsonl"),
         state=RunState(workspace.root, {"goal": objective.goal, "done_when": objective.done_when}),
+        format_retries=int(config.get("format_retries", 1)),
     )
 
     try:
@@ -126,6 +224,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    if getattr(args, "architect", None) is not None:
+        # CLI --architect/--no-architect override the config's architect mode.
+        config = dict(config)
+        config["architect"] = args.architect
+    if getattr(args, "mode", None) is not None:
+        # CLI --mode overrides the config's task mode.
+        config = dict(config)
+        config["mode"] = args.mode
     objective = Objective(goal=args.objective, done_when=args.done_when, constraints=args.constraints)
     try:
         orchestrator = build_orchestrator(
@@ -228,6 +334,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     init = sub.add_parser("init", help="write a starter config file")
     init.add_argument("--path", default="loop-engineer.yaml", help="config output path")
+    init.add_argument("--ui", action="store_true",
+                      help="also scaffold playwright.config.ts + tests-ui/smoke.spec.ts "
+                           "and add unit + ui gates to the config (existing files are "
+                           "skipped, never overwritten)")
     init.set_defaults(func=_cmd_init)
 
     build = sub.add_parser("build", help="run one guarded builder round (JSON out)")
@@ -257,6 +367,16 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--constraints", default="", help="optional rules for the builder")
     run.add_argument("--workspace", default="./workspace", help="output directory")
     run.add_argument("--config", default="", help="path to a loop-engineer.yaml config")
+    architect_group = run.add_mutually_exclusive_group()
+    architect_group.add_argument(
+        "--architect", dest="architect", action="store_const", const="on",
+        default=None, help="force the architect stage on (overrides config)")
+    architect_group.add_argument(
+        "--no-architect", dest="architect", action="store_const", const="off",
+        help="disable the architect stage (overrides config)")
+    run.add_argument("--mode", default=None, choices=list(REQUESTABLE_MODES),
+                     help="task mode (overrides config): auto detects build vs "
+                          "enhance from tracked files; fix/audit are explicit-only")
     run.add_argument("--run-id", default="", dest="run_id",
                      help="resume/stable run id (auto-generated when empty)")
     run.set_defaults(func=_cmd_run)

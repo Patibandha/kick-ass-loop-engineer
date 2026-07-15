@@ -125,6 +125,20 @@ a crash or context reset.
 
 ## Quick start
 
+**Zero-install, straight from the repo** — [uv](https://docs.astral.sh/uv/) runs the CLI in an
+ephemeral isolated env (the package is pure stdlib + `pyyaml`, so it builds in seconds):
+
+```bash
+# run the CLI with no clone, no pip, no virtualenv
+uvx --from git+https://github.com/Patibandha/kick-ass-loop-engineer loop-engineer --help
+
+# or from a local checkout while developing
+uvx --from /path/to/kick-ass-loop-engineer loop-engineer --help
+```
+
+`uvx` is ideal for a one-off `loop-engineer verify` or `run`. For day-to-day use and the
+`/loop-engineer` Claude Code skill, install the package:
+
 ```bash
 # 1. install (Python 3.9+; only runtime dep is pyyaml)
 git clone https://github.com/Patibandha/kick-ass-loop-engineer.git
@@ -175,20 +189,50 @@ done when `python -m unittest discover -s todo/tests` passes
 The engine itself makes **no network calls** — it shells out to your configured provider and
 otherwise runs on the Python standard library.
 
-### Bring your own model — stated accurately
+### Bring your own model — literally any model
 
-Model-agnostic is the whole point, so here's the honest state of it. **Today there are three
-native backends:** `ollama` (any local or cloud-proxied model — Meta **Llama**, **Qwen**,
-**Kimi**, **DeepSeek**), `claude_code`, and `anthropic`. Use any of them as the builder or the
-reviewer; the one rule the engine enforces is that **the reviewer is a different model family
-than the builder**, so no model grades its own homework.
+Model-agnostic is the whole point, and as of 3.0 it's the honest, shipped state of it. There
+are **four native backends** — pick any as the builder or the reviewer:
 
-ChatGPT / Gemini and other vendors are reachable **only through an OpenAI-compatible or Ollama
-shim** right now — there's no first-class adapter yet. Native adapters for every major web AI
-are on the [roadmap](#roadmap); the core is built so that's a matter of adding an adapter, not
-a rewrite.
+- **`ollama`** — any local or cloud-proxied model (Meta **Llama**, **Qwen**, **Kimi**,
+  **DeepSeek**), `$0` on local.
+- **`openai_compat`** — _any endpoint that speaks OpenAI `/chat/completions`_. This is the big
+  one: **ChatGPT, Gemini** (via its OpenAI layer), **Grok, DeepSeek, Mistral, Qwen, OpenRouter,
+  Groq, Together** — and every mainstream **local** runtime (llama.cpp server, LM Studio, vLLM,
+  local Ollama). One adapter, first-class — **no shim, no rewrite.** You change only `base_url`,
+  `model`, and the *name* of the env var holding your key; the key itself never lives in config.
+- **`anthropic`** — the Anthropic Messages API.
+- **`claude_code`** — headless Claude Code (`claude -p`) for frontier/dispatcher roles.
+
+So ChatGPT / Gemini / Groq / vLLM / any OpenAI-style server are **first-class builders and
+reviewers now**, not shims. The one rule the engine enforces is that **the reviewer is a
+different model family than the builder** — checked against the *constructed* provider, not a
+config label — so no model grades its own homework. For a third-party model family detection
+can't classify, declare it with a `family:` key.
 
 ![Any model as the muscle; a different family reviews.](assets/model-agnostic.gif)
+
+---
+
+## Diverse ensembles
+
+For a hard slice the loop doesn't take one shot — it races **N competing attempts** in isolated
+worktrees and keeps the one whose gates PASS (a selection, never a merge; among passers the
+simplest wins the tiebreak). 3.0 makes those attempts **diverse by construction**, so they don't
+all wander into the same corner of the solution space:
+
+- **Auto temperature ladder** — with just `ensemble.n`, attempts vary on a deterministic ladder
+  (`0.2, 0.7, 1.0`, then `+0.3` steps capped at `1.5`): `n: 2` gives you one conservative attempt
+  and one creative one, and the same `n` always yields the same specs.
+- **Per-attempt models** — set `ensemble.attempts` to a list of `{model, temperature?, provider?,
+  family?}` and each attempt can be a *different model or vendor entirely* — Kimi vs. Qwen vs. a
+  third-party `openai_compat` endpoint, all racing the same slice.
+
+**Gates still pick the winner — always.** Diversity only changes how each attempt is *built*;
+nothing scores an attempt by its temperature or model. And the cross-model guard holds at **two
+layers**: every attempt spec is family-checked against the reviewer at config time (before a cent
+is spent), and the *winning* attempt's real constructed provider is re-checked at review time — so
+no attempt can sneak past into grading its own work.
 
 ---
 
@@ -199,9 +243,16 @@ a rewrite.
 
 ```yaml
 builder:
-  provider: ollama            # claude_code | ollama | anthropic
+  provider: ollama            # claude_code | ollama | anthropic | openai_compat
   model: kimi-k2.7-code:cloud  # any pulled Ollama tag
   host: http://localhost:11434
+
+# builder:                    # ALTERNATIVE: any OpenAI-compatible /chat/completions endpoint
+#   provider: openai_compat
+#   model: gpt-5.5
+#   base_url: https://api.openai.com/v1   # or Gemini/OpenRouter/Groq/local — see Backends
+#   api_key_env: OPENAI_API_KEY           # NAME of the env var holding the key, never the key
+#   family: gpt                           # third-party models declare a family for the guard
 
 reviewer:                      # cross-model reviewer — family MUST differ from the builder
   provider: ollama
@@ -229,8 +280,14 @@ template. The pipeline runs with sane defaults even if you delete the optional s
 | Provider | Use it for | Billing |
 |---|---|---|
 | `ollama` | Local or cloud-proxied models (Kimi, Qwen, Llama) | Free local / cloud compute |
-| `claude_code` | Headless Claude Code (`claude -p`) | Subscription credit |
+| `openai_compat` | **Any** OpenAI `/chat/completions` endpoint — ChatGPT, Gemini (OpenAI layer), Grok, DeepSeek, Mistral, Qwen, OpenRouter, Groq, Together, and local runtimes (llama.cpp, LM Studio, vLLM) | Vendor pay-as-you-go / free local |
 | `anthropic` | Anthropic Messages API | Pay-as-you-go API |
+| `claude_code` | Headless Claude Code (`claude -p`) | Subscription credit |
+
+For `openai_compat`, only `base_url`, `model`, and `api_key_env` (the env-var *name*) change —
+e.g. OpenAI `https://api.openai.com/v1`, Gemini `https://generativelanguage.googleapis.com/v1beta/openai`,
+OpenRouter `https://openrouter.ai/api/v1`, Groq `https://api.groq.com/openai/v1`, local Ollama
+`http://localhost:11434/v1`. The key stays in your environment, never in config.
 
 ---
 
@@ -238,8 +295,8 @@ template. The pipeline runs with sane defaults even if you delete the optional s
 
 | Command | What it does |
 |---|---|
-| `loop-engineer init [--path PATH]` | Write a starter `loop-engineer.yaml`. |
-| `loop-engineer run --objective … --done-when … [--workspace DIR] [--config FILE]` | The **full verified pipeline** (decompose → ensemble → gates+proof → cross-model review → promote). Prints one JSON `RunOutcome`. |
+| `loop-engineer init [--path PATH] [--ui]` | Write a starter `loop-engineer.yaml`; `--ui` also adds a Playwright `ui` gate and scaffolds `playwright.config.ts` + a smoke spec. |
+| `loop-engineer run --objective … --done-when … [--workspace DIR] [--config FILE] [--mode auto\|build\|enhance\|fix\|audit] [--architect\|--no-architect]` | The **full verified pipeline** (decompose → architect → ensemble → gates+proof → cross-model review → promote). Prints one JSON `RunOutcome`. |
 | `loop-engineer refine --build "<idea>" [--done-when …] [--interview]` | Assess an idea against a six-slot think-tank gate + a measurability lint; write `SPEC.md`/`GOAL.md` when ready, or return the gaps/questions. |
 | `loop-engineer next --workspace DIR [--available csv]` | Emit **one** dispatcher envelope (`invoke_skill` / `invoke_agent` / `run_engine` / `verify_citations` / `ask_user` / `terminal`) for the calling session. Always exits 0; state lives in the envelope. |
 | `loop-engineer verify --gate <gate> --cmd "<allowlisted>" [--prove] --workspace DIR` | Run a named gate and emit a JSON evidence record `{gate, command, passed, evidence, proof}`. |
@@ -264,6 +321,12 @@ doesn't just check that the suite is green — it **proves the test exercises th
 The gate only counts as passed if the full **green → red → green** sequence completes.
 Verdicts come from real artifact captures, not the chat transcript.
 
+![proof-of-test demo: loop-engineer verify --prove runs a real revert → red → restore → green cycle and reports proven: true](assets/proof-of-test-demo.gif)
+
+> The GIF above is a **real** `loop-engineer verify --prove` run, recorded by
+> [`scripts/make_demo_gif.py`](scripts/make_demo_gif.py) — revert the change, watch the suite go
+> red, restore it, watch it go green. Regenerate it any time with `python3 scripts/make_demo_gif.py`.
+
 ### Gate categories
 
 | Gate | Checks |
@@ -273,6 +336,12 @@ Verdicts come from real artifact captures, not the chat transcript.
 | `data_leak` | No secrets or PII leaked into output |
 | `performance` | Benchmark / timing assertion passes |
 | `smoke` | Basic integration / end-to-end command passes |
+| `ui` | Browser DOM-assertion tests (Playwright) pass |
+| `architecture` | Declared-architecture conformance (import-linter) holds |
+
+In config, `gates:` is a **list** — each entry names a gate kind, its allowlisted command, and a
+per-gate `prove:` toggle; the pipeline runs them in order, fail-fast, per attempt and at
+finalization.
 
 ---
 
@@ -293,6 +362,20 @@ Every run ends in exactly one of seven states (the process exit code is `0` for 
 
 ---
 
+## Run journal
+
+Every run writes an append-only journal to `<workspace>/.loop-engineer/events.jsonl` — one line
+per event (`{ts, run_id, event, payload}`) that lets you **reconstruct the whole run afterward**
+without re-running anything. `attempt_started` records each attempt's spec (model + temperature),
+`gate_result` records every gate's verdict and whether it was `proven`, `observer_ran` and
+`format_retry` trace the retry loop, and `cost_recorded` accounts each provider call in dollars
+(reconciling with the ledger, which stays the source of truth for money). Replay it into a
+timeline and every gate verdict lines up with the outcome evidence — the proof isn't just in the
+final report, it's in the tape. The journal is deliberately never deduplicated, so a consumer
+reconstructing a resumed run just tolerates the re-announced durable events.
+
+---
+
 ## Security
 
 Guardrails are enforced **in code, not just prompts**:
@@ -310,20 +393,27 @@ Guardrails are enforced **in code, not just prompts**:
 
 ## Roadmap
 
-The model-agnostic core is built so that **adding a provider is an adapter, not a rewrite** —
-which is exactly where this is headed:
+**Shipped in 3.0 — the goals from this list are now done:**
 
-- **Universal provider support** — native adapters for **every major web AI agent on the
-  market**: OpenAI / ChatGPT, Google **Gemini**, hosted Meta **Llama**, Anthropic **Claude**,
-  and **Japanese models** (Sakana AI, ELYZA, Preferred Networks **PLaMo**, Rakuten AI, NTT
-  tsuzumi) — plus anything reachable over an OpenAI-compatible endpoint. The goal: pick
-  *literally any* AI agent, anywhere, as your builder or reviewer, and mix families freely for
-  cross-model review.
-- **Observability & control plane** — a separate layer for multi-channel notifications and a
-  live dashboard, so you can watch and steer long autonomous runs without babysitting a terminal.
+- ✅ **Universal provider support.** The `openai_compat` backend makes *any* OpenAI-compatible
+  endpoint first-class — ChatGPT, Gemini, Grok, DeepSeek, Mistral, Qwen, OpenRouter, Groq,
+  Together, and every mainstream local runtime — alongside native `ollama`, `anthropic`, and
+  `claude_code`. Pick literally any model as builder or reviewer and mix families freely.
+- ✅ **Design-first architect stage** — validated Mermaid diagrams and executable
+  architecture-conformance gates for multi-slice work.
+- ✅ **Working "eyes" for browser work** — `ui` gates, a failure observer, an `init --ui`
+  scaffold, and an advisory VLM screenshot critique.
+- ✅ **Brownfield modes** — `build` / `enhance` / `fix` / `audit`: repo-context briefs,
+  reproduce-first bugfixes, and read-only findings sweeps.
+- ✅ **Diverse ensembles** (per-attempt temperature/model) and a **run journal** that
+  reconstructs any run post-hoc.
 
-Shipped today are the three native backends above (`ollama`, `claude_code`, `anthropic`);
-everything in this section is honestly labeled **not yet built.**
+**Still ahead — honestly labeled _not yet built_:**
+
+- **Observability & control plane** (a separate repo) — a multi-channel notifier
+  (Telegram / WhatsApp / Slack), a live web dashboard, and a mobile PWA, all consumers of the
+  run journal's event stream — so you can watch and steer long autonomous runs without
+  babysitting a terminal.
 
 ---
 
@@ -333,7 +423,8 @@ Full detail in [CHANGELOG.md](CHANGELOG.md). The short story:
 
 | Version | Milestone | What it added |
 |---|---|---|
-| **2.0.0** | Deep research + GA _(current)_ | Mandatory research/provenance gate (tag coverage + citation re-fetch), `research_blocked` state, and the `2.0` line's GA. |
+| **3.0.0** | Any model, verifiable everywhere _(current)_ | Native `openai_compat` provider (any OpenAI-compatible endpoint), design-first architect stage + architecture-conformance gates, `ui` gates with a failure observer, brownfield task modes (`build`/`enhance`/`fix`/`audit`), diverse ensembles, and the run journal — over `uvx`, with a real proof-of-test demo. |
+| **2.0.0** | Deep research + GA | Mandatory research/provenance gate (tag coverage + citation re-fetch), `research_blocked` state, and the `2.0` line's GA. |
 | `2.0.0-alpha.3` | Think-tank interview (2.0-M3) | Six-slot `refine --interview` (purpose/users/constraints/metrics/anti-goals/risks) + a measurability lint that rejects vague done-whens. |
 | `2.0.0-alpha.2` | Next protocol (2.0-M2) | The session **dispatcher loop** — `loop-engineer next` emits one artifact-derived envelope per step; crash/reset-safe. |
 | `2.0.0-alpha.1` | Pipeline core (2.0-M1) | The standalone verified pipeline: decompose → ensemble in worktrees → gates+proof → cross-model review → promote, as one `RunOutcome`. |
@@ -346,7 +437,7 @@ Full detail in [CHANGELOG.md](CHANGELOG.md). The short story:
 ## Tests
 
 ```bash
-python3 -m pytest -q        # the engine's own suite
+python3 -m pytest -q        # the engine's own suite — 747 tests in 3.0.0
 ```
 
 The engine is Python 3.12-tested, `>= 3.9` compatible, and depends only on `pyyaml` at runtime.

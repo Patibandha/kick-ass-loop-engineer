@@ -49,7 +49,7 @@ from .terminal import RunOutcome, TerminalState
 from .workspace import Workspace, WriteOutcome
 from .worktree import WorktreeManager
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 
 __all__ = [
     "Objective",

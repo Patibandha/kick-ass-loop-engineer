@@ -14,7 +14,7 @@ import json
 import urllib.error
 import urllib.request
 
-from .base import Provider, ProviderError, ProviderResult
+from .base import Provider, ProviderError, ProviderResult, as_int
 
 
 class OllamaProvider(Provider):
@@ -69,5 +69,13 @@ class OllamaProvider(Provider):
 
         message = body.get("message") or {}
         text = message.get("content", "")
-        tokens = int(body.get("prompt_eval_count", 0)) + int(body.get("eval_count", 0))
-        return ProviderResult(text=text, tokens=tokens, cost_usd=0.0, model=self.model)
+        prompt_tokens = as_int(body.get("prompt_eval_count"))
+        completion_tokens = as_int(body.get("eval_count"))
+        return ProviderResult(
+            text=text,
+            tokens=prompt_tokens + completion_tokens,
+            cost_usd=0.0,
+            model=self.model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )

@@ -18,11 +18,15 @@ class Objective:
         goal: Free-form description of what to build or accomplish.
         done_when: Explicit, checkable criteria the reviewer uses to approve.
         constraints: Optional rules the builder must respect (style, scope).
+        context: Optional pre-assembled repo context (map, existing files)
+            rendered as a CONTEXT section in the builder brief; empty keeps
+            the brief byte-identical to a context-free objective.
     """
 
     goal: str
     done_when: str
     constraints: str = ""
+    context: str = ""
 
     def builder_brief(self, feedback: str = "") -> str:
         """Render the request handed to the builder for one round.
@@ -31,11 +35,14 @@ class Objective:
             feedback: Reviewer feedback from the previous round, if any.
 
         Returns:
-            A prompt describing the goal, criteria, constraints, and revisions.
+            A prompt describing the goal, criteria, constraints, repo
+            context, and revisions.
         """
         sections = [f"GOAL:\n{self.goal}", f"DONE WHEN:\n{self.done_when}"]
         if self.constraints:
             sections.append(f"CONSTRAINTS:\n{self.constraints}")
+        if self.context:
+            sections.append(f"CONTEXT:\n{self.context}")
         if feedback:
             sections.append(f"REVISE per this review feedback:\n{feedback}")
         return "\n\n".join(sections)

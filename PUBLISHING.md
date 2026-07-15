@@ -15,7 +15,7 @@ git branch -M main
 Create a repo on GitHub (private to start, public when ready), then:
 
 ```bash
-git remote add origin https://github.com/Patibandha/kick-ass-loop-engineer.git
+git remote add origin https://github.com/Patibandha/loop-engineer.git
 git push -u origin main
 git tag v1.0.0-alpha.1 && git push --tags
 ```
@@ -23,7 +23,7 @@ git tag v1.0.0-alpha.1 && git push --tags
 ## How others install it
 
 ```bash
-git clone https://github.com/Patibandha/kick-ass-loop-engineer.git
+git clone https://github.com/Patibandha/loop-engineer.git
 cd loop-engineer
 pip install -e . --break-system-packages
 cp -r .claude/skills/loop-engineer ~/.claude/skills/   # makes /loop-engineer global

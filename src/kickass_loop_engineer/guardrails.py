@@ -47,6 +47,9 @@ DEFAULT_VERIFY_PREFIXES = (
     # verifier gate tools (M1)
     "bandit", "semgrep", "gitleaks", "detect-secrets", "trufflehog",
     "pytest-benchmark", "python -m pytest_benchmark", "k6 run", "locust",
+    # 3.0 gate tools (spec §3.1 — curated; NEVER a blanket "npx")
+    "npx playwright", "npx playwright-cli", "npx --yes @probelabs/maid",
+    "lint-imports",
 )
 
 _SHELL_METACHARACTERS = (";", "|", "&", "`", "$", ">", "<", "\n", "\r", "(", ")", "{", "}")

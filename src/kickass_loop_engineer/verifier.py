@@ -14,12 +14,18 @@ from a model's transcript:
 """
 from __future__ import annotations
 
+import logging
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 from .gates import GATES
 from .guardrails import VerificationPolicy
+
+logger = logging.getLogger(__name__)
+
+OBSERVER_TIMEOUT_SECONDS = 30.0
+OBSERVER_CAP = 8192
 
 ARTIFACTS_NOT_TRANSCRIPT = (
     "Use the worktree and external state as authoritative. Do not rely on intent, "
@@ -129,11 +135,14 @@ class EvidenceRecord:
     passed: bool
     evidence: str = ""
     proof: Optional[ProofRecord] = None
+    observed: str = ""
 
     def to_dict(self) -> dict:
         """Return a JSON-serializable representation."""
         d = {"gate": self.gate, "command": self.command, "passed": self.passed,
              "evidence": self.evidence}
+        if self.observed:
+            d["observed"] = self.observed
         if self.proof is not None:
             d["proof"] = {"proven": self.proof.proven, "green_before": self.proof.green_before,
                           "red_when_reverted": self.proof.red_when_reverted,
@@ -164,3 +173,89 @@ def run_gate(name: str, command: str, workspace: str, with_proof: bool = False,
         record.proof = prove(command, workspace, policy)
         record.passed = record.proof.proven
     return record
+
+
+@dataclass
+class GatesResult:
+    """Ordered evidence for a gate list; passed only when every gate ran green.
+
+    ``records`` holds one ``EvidenceRecord`` per gate that actually ran, in spec
+    order. Because the runner is fail-fast, a failing run carries records up to
+    and including the first failure. An empty ``records`` is never a pass: no
+    gates ran, so there is no evidence of anything.
+    """
+
+    records: list = field(default_factory=list)
+
+    @property
+    def passed(self) -> bool:
+        """True only when at least one gate ran and every record passed."""
+        return bool(self.records) and all(r.passed for r in self.records)
+
+    def to_dict(self) -> dict:
+        """Return a JSON-serializable ``{"passed": ..., "gates": [...]}``."""
+        return {"passed": self.passed, "gates": [r.to_dict() for r in self.records]}
+
+
+def _run_observer(command: str, workspace: str,
+                  policy: Optional[VerificationPolicy]) -> str:
+    """Run a failing gate's observe command under gate authority; never raises.
+
+    The observer is diagnostic only — the eyes for the retry loop, never a
+    verdict. It borrows the gate policy's allowlist with a shorter leash
+    (``OBSERVER_TIMEOUT_SECONDS`` timeout, output capped at ``OBSERVER_CAP``).
+    Any problem — rejection, timeout, missing tool, even a broken policy —
+    logs a warning and contributes nothing; the gate failure stands untouched.
+    """
+    try:
+        observer_policy = replace(policy or VerificationPolicy(),
+                                  timeout_seconds=OBSERVER_TIMEOUT_SECONDS,
+                                  tail_chars=OBSERVER_CAP)
+        result = observer_policy.run(command, cwd=workspace)
+        if result.error:
+            logger.warning("observer could not run: %s (%s)", command, result.error)
+            return ""
+        observed = result.stdout_tail or ""
+        stderr = (result.stderr_tail or "").strip()
+        if stderr:
+            observed = f"{observed}\n[stderr] {stderr}" if observed else f"[stderr] {stderr}"
+        return observed[:OBSERVER_CAP]
+    except Exception as exc:  # noqa: BLE001 - the observer must never fail the run
+        logger.warning("observer failed (gate verdict unchanged): %s: %s", command, exc)
+        return ""
+
+
+def run_gates(specs, workspace: str, policy: Optional[VerificationPolicy] = None) -> GatesResult:
+    """Run gates in order, fail-fast; per-gate proof comes from each spec.
+
+    Gates execute in the order given and the run stops at the first failure —
+    later gates do not run and leave no records. Each spec's ``prove`` flag
+    decides whether that gate gets proof-of-test. An empty spec list yields a
+    failed result (never a vacuous pass): the empty gates list in ``to_dict()``
+    IS the explanation.
+
+    A FAILING gate with an ``observe`` command additionally runs the observer
+    (after the failure, before the fail-fast break) and stores its capped
+    output on the failing record's ``observed`` — retry context for builders
+    that cannot see the browser. Observer problems never change the verdict.
+
+    Args:
+        specs: Ordered ``GateSpec`` instances (name/command/prove).
+        workspace: The git working tree the gates run in.
+        policy: Verification policy threaded to every gate; a default is used
+            by each gate run when omitted.
+
+    Returns:
+        A ``GatesResult`` with one record per gate that ran, in order.
+    """
+    result = GatesResult()
+    for spec in specs:
+        record = run_gate(spec.name, spec.command, workspace,
+                          with_proof=spec.prove, policy=policy)
+        result.records.append(record)
+        if not record.passed:
+            observe = getattr(spec, "observe", "")
+            if observe:
+                record.observed = _run_observer(observe, workspace, policy)
+            break
+    return result

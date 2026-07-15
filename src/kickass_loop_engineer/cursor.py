@@ -42,12 +42,70 @@ class PipelineCursor:
         self._write()
         self._event("stage", {"stage": stage, "status": status, **(detail or {})})
 
+    def record_mode(self, mode: str) -> None:
+        """Persist the run's RESOLVED task mode as a durable cursor key.
+
+        Like ``architect_done``, the live ``stage``/``detail`` fields are
+        overwritten by every later ``set_stage``, so the resolved mode rides
+        its own persisted key that resume and ``next`` readers find on the
+        loaded cursor for the whole run.
+        """
+        self._state["mode"] = mode
+        self._write()
+        self._event("mode_resolved", {"mode": mode})
+
+    def mark_repro_path(self, path: str) -> None:
+        """Persist the committed repro test's path as a durable cursor key.
+
+        The ``architect_done`` pattern: the live ``stage``/``detail`` fields
+        are overwritten by every later ``set_stage``, so a resumed fix-mode
+        run reads this key to skip regeneration/re-commit and just re-arm
+        the proving gate.
+        """
+        self._state["repro_path"] = path
+        self._write()
+        self._event("repro_committed", {"repro_path": path})
+
+    def mark_architect_done(self) -> None:
+        """Persist the durable architect-done flag so a resumed run skips the stage.
+
+        The live ``stage`` field is overwritten by every later ``set_stage``,
+        so resume detection reads this key (mirroring ``completed_slices``)
+        from the loaded cursor instead.
+        """
+        self._state["architect_done"] = True
+        self._write()
+        self._event("architect_done", {})
+
     def complete_slice(self, role: str) -> None:
         """Mark a slice done so a resumed run skips it."""
         if role not in self._state.setdefault("completed_slices", []):
             self._state["completed_slices"].append(role)
         self._write()
         self._event("slice_completed", {"role": role})
+
+    def emit(self, event: str, payload: dict) -> None:
+        """Append one event-ONLY journal line; ``pipeline.json`` is untouched.
+
+        The public emit path for high-frequency journal events (per-attempt
+        starts, gate verdicts, observer runs, format retries, cost records).
+        These must NOT go through ``set_stage``: the cursor's live ``stage``
+        means "where the run is" for resume/``next`` readers, and thrashing it
+        per attempt would corrupt that signal. ``events.jsonl`` is the full
+        append-only history; ``pipeline.json`` is the current position.
+
+        Replay tolerance (the journal contract): the journal is append-only
+        and NEVER deduplicated. A resumed run re-announces durable facts —
+        ``mode_resolved`` appears once per (re)start of the same run_id, and
+        any event may recur across resumes — so consumers reconstructing a
+        timeline must tolerate repeated events; the writer keeps no dedupe
+        state by design.
+
+        Args:
+            event: Event name (e.g. ``"attempt_started"``).
+            payload: JSON-serializable event details.
+        """
+        self._event(event, payload)
 
     def load(self) -> Optional[dict]:
         """Return the persisted cursor, or None when absent/corrupt."""

@@ -1,6 +1,14 @@
-"""End-to-end pipeline proof on a toy repo — the 2.0-M1 exit criterion."""
+"""End-to-end pipeline proofs on a toy repo.
+
+Covers the 2.0-M1 exit criterion (full pipeline with faked providers) and the
+3.0-M1 one (the same pipeline wired by ``build_orchestrator`` with builder AND
+reviewer on the ``openai_compat`` provider, served by local HTTP stubs — the
+real provider code path, fully offline).
+"""
 import json
 import subprocess
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
@@ -61,14 +69,16 @@ def test_full_pipeline_on_toy_repo(tmp_path):
         notifier=Notifier(), memory=Memory(str(tmp_path / "mem.db")),
         playbook=Playbook(str(tmp_path / "playbook.json")),
         cursor=PipelineCursor(ws),
-        gate=GateSpec(name="unit", command="python3 -m pytest -q"),
-        ensemble_n=2, run_id="e2e-1", prove=True,
+        gates=[GateSpec(name="unit", command="python3 -m pytest -q", prove=True)],
+        ensemble_n=2, run_id="e2e-1",
     )
     outcome = orch.run()
 
     assert outcome.state is TerminalState.SUCCESS, outcome.reason
     assert outcome.evidence, "SUCCESS must carry gate evidence"
-    assert any(e.get("proof", {}).get("proven") for e in outcome.evidence), "proof-of-test must hold"
+    assert all(e["passed"] for e in outcome.evidence), "every gates result is green"
+    assert any(g.get("proof", {}).get("proven")
+               for e in outcome.evidence for g in e["gates"]), "proof-of-test must hold"
     assert (repo / "feature.py").exists(), "winner was promoted into the workspace"
     cursor = json.loads((repo / ".loop-engineer" / "pipeline.json").read_text())
     assert cursor["stage"] == "terminal" and cursor["status"] == "success"
@@ -78,3 +88,81 @@ def test_full_pipeline_on_toy_repo(tmp_path):
     assert subprocess.run(["git", "-C", ws, "worktree", "list", "--porcelain"],
                           capture_output=True, text=True).stdout.count("worktree ") == 1, \
         "all attempt worktrees were cleaned up"
+
+
+class _OpenAIStubHandler(BaseHTTPRequestHandler):
+    """Answers every POST with the server's fixed openai-shaped reply."""
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        self.server.requests.append(self.rfile.read(length).decode("utf-8"))
+        body = json.dumps({
+            "choices": [{"message": {"content": self.server.reply}}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 7},
+        })
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(body.encode("utf-8"))
+
+    log_message = lambda *a: None
+
+
+def _openai_stub(reply):
+    """Start a local chat-completions stub; return ``(server, base_url)``.
+
+    The server records every request body on ``server.requests`` and replies
+    to all of them with *reply* wrapped in an OpenAI-shaped JSON envelope.
+    """
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _OpenAIStubHandler)
+    server.reply = reply
+    server.requests = []
+    threading.Thread(target=server.serve_forever,
+                     kwargs={"poll_interval": 0.01}, daemon=True).start()
+    return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+
+@pytest.mark.slow
+def test_full_pipeline_via_openai_compat_stubs(tmp_path):
+    """3.0-M1 exit proof: config-built pipeline, both agents on openai_compat.
+
+    The builder stub answers every call with a FILE block (the decompose call
+    sees non-JSON and falls back to a single slice); the reviewer stub always
+    answers ``NO FINDINGS``. Models are unknown to the family detector, so the
+    config declares families — the same setup a real third-party endpoint
+    needs. Everything runs offline against local stubs.
+    """
+    from kickass_loop_engineer.config import build_orchestrator
+    repo = _toy_repo(tmp_path)
+    ws = str(repo)
+    builder_server, builder_url = _openai_stub(FEATURE)
+    reviewer_server, reviewer_url = _openai_stub("NO FINDINGS")
+    cfg = {
+        "builder": {"provider": "openai_compat", "model": "stub-coder",
+                    "base_url": builder_url, "api_key_env": "LOOP_E2E_UNSET_KEY",
+                    "family": "alpha"},
+        "reviewer": {"provider": "openai_compat", "model": "stub-critic",
+                     "base_url": reviewer_url, "api_key_env": "LOOP_E2E_UNSET_KEY",
+                     "family": "beta"},
+        "ensemble": {"n": 1},
+        "ledger": {"path": str(tmp_path / "ledger.json")},
+    }
+    try:
+        orch = build_orchestrator(
+            cfg, workspace=ws, month="2026-07",
+            objective=Objective(goal="implement double()",
+                                done_when="python3 -m pytest -q passes"),
+            run_id="e2e-openai-compat")
+        outcome = orch.run()
+    finally:
+        builder_server.shutdown()
+        builder_server.server_close()
+        reviewer_server.shutdown()
+        reviewer_server.server_close()
+
+    assert outcome.state is TerminalState.SUCCESS, outcome.reason
+    assert (repo / "feature.py").exists(), "winner was promoted into the workspace"
+    assert len(builder_server.requests) >= 2, \
+        "builder stub must serve the decompose call and the build round"
+    assert len(reviewer_server.requests) >= 1, \
+        "reviewer stub must serve the cross-model review"
