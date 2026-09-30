@@ -15,7 +15,10 @@ from typing import Any, Optional
 
 from .agents import BUILDER_SYSTEM, UI_BUILDER_RULES, Builder, Reviewer
 from .cursor import PipelineCursor
+from .decision.chain import build_chain
+from .decision.settings import parse_settings
 from .ensemble import AttemptSpec, default_specs
+from .escalation import _RISKY_TOKENS
 from .gates import GATES, GateSpec
 from .guardrails import DEFAULT_VERIFY_PREFIXES, VerificationPolicy
 from .ledger import CostLedger
@@ -44,11 +47,19 @@ EXAMPLE_CONFIG = """\
 # No API keys are used: the ollama provider talks to the local daemon
 # (localhost:11434, $0 cost); a `:cloud` tag is served via your ollama.com login on
 # the daemon (set up once with `ollama signin`). ANTHROPIC_API_KEY is never used.
+# Two kinds of builder work: a chat model returns whole files the engine writes,
+# while an agentic CLI (claude_code, gemini) edits the worktree itself and the
+# engine harvests whatever changed — the guardrails apply to both.
 
 builder:
-  provider: ollama            # claude_code | ollama | anthropic | openai_compat
+  provider: ollama            # claude_code | gemini | ollama | anthropic | openai_compat
   model: kimi-k2.7-code:cloud  # any pulled Ollama tag
   host: http://localhost:11434
+
+# builder:                     # ALTERNATIVE: an agentic CLI builder
+#   provider: claude_code      # agentic: edits the worktree in place (Claude Max subscription)
+#   model: opus                # optional; omit to use the CLI's default model
+#   family: claude             # the reviewer's family must differ from this one
 
 # builder:                     # ALTERNATIVE: any OpenAI-compatible /chat/completions endpoint
 #   provider: openai_compat
@@ -90,14 +101,16 @@ guardrails:
 #   screenshot_cmd: "npx playwright-cli screenshot http://localhost:3000 shot.png"
 #                              # allowlisted; the LAST token names the image it writes
 #   provider:                  # NESTED provider section, standard form (vision model)
-#     provider: ollama         # claude_code | ollama | anthropic | openai_compat
+#     provider: ollama         # claude_code | gemini | ollama | anthropic | openai_compat
 #     model: llava
 #                              # findings are advisory only (VLM visual judgment is
 #                              # ~50% accurate pairwise): they feed review feedback,
 #                              # NEVER a pass/fail verdict — gates alone decide that
 
-# format_retries: 1            # corrective re-calls per round when a builder/reviewer
-#                              # reply is non-empty but malformed (0 disables)
+# format_retries: 1            # corrective re-calls per round when a turn is
+#                              # unusable: no FILE blocks from a chat builder, no
+#                              # files changed by an agentic one, or a non-empty
+#                              # but malformed reviewer reply (0 disables)
 
 # architect: auto              # design-first architect stage: auto | on | off.
 #                              # auto (default) = smart trigger: decompose runs FIRST,
@@ -139,7 +152,36 @@ guardrails:
 #                              # (a top-level inline `pricing:` map also works);
 #                              # models with no pricing row cost $0 + a warning
 
-# notify:                      # ping on escalation + terminal state (unattended runs)
+# escalation:                  # the denylist that stops an unattended run for a human
+#   max_files: 10              # a slice touching MORE than this escalates (default 10)
+#   allow_tokens: ["deploy"]   # risky keywords this run may use in an objective without
+#                              # escalating — only for objectives that legitimately say
+#                              # them ("deploy the systemd unit", "model spend cap").
+#                              # Each must already be a denylist keyword (deploy, delete,
+#                              # drop table, drop, spend, rm -rf, force push); relaxes the
+#                              # KEYWORD check only — protected paths, the file cap and
+#                              # the attempt cap always escalate.
+
+# decision:                    # 3.2 staffing controller (Jev): sizes the team to save
+#                              # tokens ABOVE deterministic quality floors. Absent = off.
+#   backend: jev               # jev (hosted, falls back to rules) | rules (offline)
+#   model: jev-1.13.0          # pinned; aliases move and would shift tuned decisions
+#   route: typesafe            # typesafe (direct) | cloudflare (Workers AI, zero
+#                              # data retention; needs CLOUDFLARE_ACCOUNT_ID +
+#                              # CLOUDFLARE_API_TOKEN env vars)
+#   # api_key_env: TYPESAFE_API_KEY  # NAME of the key env var (route default if unset)
+#   min_confidence: 0.7        # below this a model answer falls back to the default
+#   max_attempts: 3            # ceiling on attempts per slice the model may pick
+#   floors:                    # the model may go ABOVE these, never below
+#     security: L1             # L1 gates | L2 +AI security review | L3 +strict review
+#     review: light            #   | L4 +human sign-off;  review: light|standard|strict
+#   signoff_domains: [payments]  # touched domains that force L4 human sign-off
+#                              # (auth, payments, secrets, data, infra)
+#   tiers:                     # optional cheap -> strong builder ladder: attempts start
+#     - model: qwen2.5-coder:7b  # at the tier the model picks, climb on failure, and
+#     - model: kimi-k2.7-code:cloud  # stop at the first pass (same keys as attempts)
+
+# notify:                     # ping on escalation + terminal state (unattended runs)
 #   # ntfy.sh (free, no account):
 #   command: 'curl -s -d @- ntfy.sh/your-topic'
 #   # or a webhook (Telegram bot, Slack, etc.):
@@ -186,7 +228,10 @@ def load_config(path: str) -> dict[str, Any]:
         raise RuntimeError(f"failed to load config {path!r}: {exc}") from exc
 
 
-#: Base builder section applied when the config carries no ``builder`` key.
+#: Base builder section applied when the config carries no ``builder`` key. A
+#: chat model that answers with FILE blocks is the default; an agentic provider
+#: (``claude_code``, ``gemini``) edits the worktree in place instead, which the
+#: build session detects from the constructed provider, not from this section.
 _DEFAULT_BUILDER_SECTION: dict[str, Any] = {"provider": "ollama", "model": "kimi-k2"}
 
 
@@ -293,7 +338,7 @@ _ATTEMPT_KEYS = ("model", "temperature", "provider", "family")
 #: Providers whose constructor has NO temperature parameter: an attempt spec's
 #: temperature is stripped (with a once-per-model warning) instead of causing
 #: a TypeError deep inside provider construction.
-_TEMPERATURE_FREE_PROVIDERS = ("claude_code", "anthropic")
+_TEMPERATURE_FREE_PROVIDERS = ("claude_code", "anthropic", "gemini")
 
 #: Providers whose constructor REQUIRES a ``model`` argument (no default). A
 #: cross-provider attempt spec that switches to one of these MUST name a model,
@@ -335,11 +380,20 @@ def parse_attempts(config: dict[str, Any]) -> list:
         logger.warning(
             "ensemble.n (%s) is ignored because ensemble.attempts is present; "
             "n=%d is derived from the attempts list", section.get("n"), len(raw))
+    return _parse_spec_list(raw, config, "ensemble.attempts")
+
+
+def _parse_spec_list(raw: list, config: dict[str, Any], prefix: str) -> list:
+    """Validate a list of ``{model, temperature?, provider?, family?}`` mappings.
+
+    Shared by ``ensemble.attempts`` and the ``decision.tiers`` ladder so both
+    fail the same way, naming the offending ``<prefix>[i]`` field.
+    """
     base_provider = str((config.get("builder") or {}).get("provider", "ollama")
                         or "ollama")
     specs = []
     for index, entry in enumerate(raw):
-        field = f"ensemble.attempts[{index}]"
+        field = f"{prefix}[{index}]"
         if not isinstance(entry, dict):
             raise RuntimeError(
                 f"{field} must be a mapping with model/temperature/provider/"
@@ -375,6 +429,30 @@ def parse_attempts(config: dict[str, Any]) -> list:
     return specs
 
 
+def build_decision(config: dict[str, Any]) -> tuple:
+    """Return ``(DecisionSettings, DecisionChain)`` or ``(None, None)``.
+
+    The 3.2 staffing controller is armed only by an explicit ``decision:``
+    section; absent, every run behaves exactly as before. ``decision.tiers``
+    is an optional cheap -> strong model ladder parsed with the same rules as
+    ``ensemble.attempts``.
+
+    Raises:
+        RuntimeError: On any invalid ``decision`` key (before any spend).
+    """
+    section = config.get("decision")
+    if not section:
+        return None, None
+    if not isinstance(section, dict):
+        raise RuntimeError(f"decision must be a mapping, got {type(section).__name__}")
+    raw_tiers = section.get("tiers") or []
+    if not isinstance(raw_tiers, list):
+        raise RuntimeError("decision.tiers must be a LIST of attempt mappings")
+    tiers = _parse_spec_list(raw_tiers, config, "decision.tiers") if raw_tiers else []
+    settings = parse_settings(section, tuple(tiers))
+    return settings, build_chain(settings)
+
+
 def build_attempt_factory(config: dict[str, Any], pricing: Optional[dict] = None):
     """Return a ``spec -> Builder`` factory for per-attempt builder construction.
 
@@ -386,8 +464,8 @@ def build_attempt_factory(config: dict[str, Any], pricing: Optional[dict] = None
     other agent. Provider constructors are pure (no network), so the factory
     is safe to call at config time for fail-fast validation.
 
-    Temperature handling: ``claude_code`` and ``anthropic`` constructors take
-    no temperature — the factory STRIPS it with a once-per-model warning
+    Temperature handling: ``claude_code``, ``anthropic``, and ``gemini``
+    constructors take no temperature — the factory STRIPS it with a once-per-model warning
     (shared across every call to this factory instance) instead of crashing.
 
     Args:
@@ -477,6 +555,140 @@ def task_mode(config: dict[str, Any]) -> str:
     return validate_mode(str(config.get("mode", MODE_AUTO)))
 
 
+def escalation_max_files(config: dict[str, Any]) -> int:
+    """Return the blast-radius file cap from the optional ``escalation`` section.
+
+    A slice whose winning attempt touches more than this many files escalates to
+    ``APPROVAL_REQUIRED`` rather than promoting autonomously. The default of 10
+    matches :func:`~kickass_loop_engineer.escalation.should_escalate`, so configs
+    without an ``escalation`` section behave exactly as before.
+
+    Scaffolding objectives are the reason this is configurable: creating a
+    project tree, a CI matrix, or a docs set in one slice legitimately exceeds
+    10 files, and a cap that can never be satisfied turns every run into an
+    approval stop. Raising it is a deliberate risk decision — it widens how much
+    unreviewed change a single slice can land.
+
+    Args:
+        config: Parsed config with an optional ``escalation`` mapping.
+
+    Returns:
+        The configured cap, or ``10`` when the section or key is absent.
+
+    Raises:
+        RuntimeError: When the value is not a positive integer.
+    """
+    section = config.get("escalation") or {}
+    if not isinstance(section, dict):
+        raise RuntimeError("escalation: must be a mapping")
+    raw = section.get("max_files", 10)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"escalation.max_files must be an integer, got {raw!r}") from exc
+    if value < 1:
+        raise RuntimeError(f"escalation.max_files must be >= 1, got {value}")
+    return value
+
+
+def review_block_on(config: dict[str, Any]) -> tuple[str, ...]:
+    """Return the finding severities that STOP a slice promoting.
+
+    Read from ``review.block_on``. Empty by default, which keeps review
+    advisory — findings are carried into the next round as feedback and the
+    slice promotes. That default is what let a slice promote on 2026-09-21 with
+    HIGH findings standing against it, so a project that wants review to have
+    teeth says so here:
+
+    .. code-block:: yaml
+
+        review:
+          block_on: ["HIGH", "CRITICAL"]
+
+    Args:
+        config: Parsed config with an optional ``review`` section.
+
+    Returns:
+        The configured severities, stripped of blanks, in listed order.
+
+    Raises:
+        RuntimeError: ``review.block_on`` is not a list of strings — a
+            mistyped knob must fail at load rather than silently disarm the
+            gate it was meant to arm.
+    """
+    section = config.get("review") or {}
+    if not isinstance(section, dict):
+        raise RuntimeError(f"review must be a mapping, got {type(section).__name__}")
+    raw = section.get("block_on", ()) or ()
+    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+        raise RuntimeError(
+            f"review.block_on must be a list of severities, e.g. [\"HIGH\"], "
+            f"got {type(raw).__name__}: {raw!r}")
+    severities = tuple(str(item).strip() for item in raw if str(item).strip())
+    if severities:
+        logger.warning(
+            "review findings at %s will BLOCK a slice from promoting",
+            ", ".join(severities))
+    return severities
+
+
+def escalation_allow_tokens(config: dict[str, Any]) -> tuple[str, ...]:
+    """Return risky keywords exempted for this run from the ``escalation`` section.
+
+    :func:`~kickass_loop_engineer.escalation.should_escalate` ends a run in
+    ``APPROVAL_REQUIRED`` as soon as a slice objective contains a risky keyword.
+    That is right by default and wrong for objectives that legitimately use the
+    word: writing a systemd unit file reads as *deploy*, and a "model spend cap"
+    reads as *spend*, so a real run dies on its own wording. Listing the token
+    under ``escalation.allow_tokens`` skips it for that run only.
+
+    The knob is deliberately narrow. A token must ALREADY be one of
+    :data:`~kickass_loop_engineer.escalation._RISKY_TOKENS` (stripped,
+    case-insensitive) — a typo is a config error, not a silently ignored line —
+    and it relaxes the keyword layer only. Protected paths, the file-count cap
+    and the attempt cap are never relaxable. Every accepted token logs a WARNING
+    so the exemption is visible in the run log rather than buried in YAML.
+
+    Args:
+        config: Parsed config with an optional ``escalation`` mapping.
+
+    Returns:
+        The exempted tokens, normalized to stripped lowercase and de-duplicated
+        in config order; ``()`` when the section or key is absent or ``None``.
+
+    Raises:
+        RuntimeError: When the value is not a list, an entry is not a non-empty
+            string, or an entry is not a known risky token.
+    """
+    section = config.get("escalation") or {}
+    if not isinstance(section, dict):
+        raise RuntimeError("escalation: must be a mapping")
+    raw = section.get("allow_tokens")
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise RuntimeError(
+            f"escalation.allow_tokens must be a list of strings, got {raw!r}")
+    known = tuple(dict.fromkeys(tok.strip().lower() for tok in _RISKY_TOKENS))
+    tokens: list[str] = []
+    for item in raw:
+        if not isinstance(item, str) or not item.strip():
+            raise RuntimeError(
+                "escalation.allow_tokens entries must be non-empty strings, "
+                f"got {item!r}")
+        token = item.strip().lower()
+        if token not in known:
+            raise RuntimeError(
+                f"escalation.allow_tokens: unknown risky token {item!r}; "
+                f"allowed: {list(known)}")
+        if token in tokens:
+            continue
+        tokens.append(token)
+        logger.warning(
+            "escalation: risky token %r exempted for this run by config", token)
+    return tuple(tokens)
+
+
 def parse_gates(config: dict[str, Any]) -> list[GateSpec]:
     """Normalize the ``gates`` config section into a list of :class:`GateSpec`.
 
@@ -509,7 +721,9 @@ def parse_gates(config: dict[str, Any]) -> list[GateSpec]:
         GateSpec(name=e.get("name", "unit"),
                  command=e.get("cmd", "python3 -m pytest -q"),
                  prove=bool(e.get("prove", True)),
-                 observe=str(e.get("observe", "") or ""))
+                 observe=str(e.get("observe", "") or ""),
+                 expect=str(e.get("expect", "") or ""),
+                 min_count=(int(e["min_count"]) if e.get("min_count") is not None else None))
         for e in entries
     ]
 
@@ -693,6 +907,21 @@ def build_orchestrator(config: dict[str, Any], *, workspace: str, month: str,
                            builder_family=spec.family,
                            reviewer_family=reviewer_family)
         attempt_specs.append(spec)
+    decision_settings, decision_chain = build_decision(config)
+    if decision_settings is not None:
+        # GUARD LAYER 1 for the tier ladder: every tier the controller may
+        # pick is constructed and family-checked here, before any spend.
+        tiers = []
+        for spec in decision_settings.tiers:
+            if not spec.family and builder_family and not (spec.model or spec.provider):
+                spec = replace(spec, family=builder_family)
+            tier_provider = builder_factory(spec).provider
+            ensure_cross_model(
+                str(getattr(tier_provider, "model", None) or tier_provider.name),
+                reviewer_model, builder_family=spec.family,
+                reviewer_family=reviewer_family)
+            tiers.append(spec)
+        decision_settings = replace(decision_settings, tiers=tuple(tiers))
     visual_cfg, visual_provider = build_visual(config)
     run_dir = os.path.join(workspace, ".loop-engineer")
     return Orchestrator(
@@ -718,4 +947,9 @@ def build_orchestrator(config: dict[str, Any], *, workspace: str, month: str,
         visual_cfg=visual_cfg,
         visual_provider=visual_provider,
         mode=task_mode(config),
+        escalation_max_files=escalation_max_files(config),
+        escalation_allow_tokens=escalation_allow_tokens(config),
+        review_block_on=review_block_on(config),
+        decision_settings=decision_settings,
+        decision_chain=decision_chain,
     )

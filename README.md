@@ -236,6 +236,64 @@ no attempt can sneak past into grading its own work.
 
 ---
 
+## Staffing controller (Jev) — new in 3.2
+
+Every run used to pay for the same team whatever the job: competing attempts, QA, security,
+ship, and the same review depth, whether it was a README typo or a payment flow. 3.2 adds a
+**decision model** that sizes the team for each run. It uses
+[TypeSafe Jev](https://docs.typesafe.ai), which picks from declared options and returns a
+probability for each, and falls back to deterministic rules.
+
+**What the model decides** (two batched calls per run, well under a cent):
+
+- risk tier;
+- security depth: **L1** gates → **L2** plus an AI security review → **L3** plus strict
+  blocking review → **L4** plus human sign-off;
+- whether QA and DevOps/ship run, review depth, and whether builders must write tests;
+- whether the architect stage runs;
+- attempts per slice and the starting model tier;
+- one stall recovery.
+
+**Cheapest passing model wins.** With `decision.tiers` (a cheap-to-strong builder ladder),
+attempts start on the tier the model picks, climb one tier on failure, and **stop at the
+first pass**. The stronger models are only paid for when the cheaper ones fail.
+
+**Quality floors are code, not model output.**
+- The model may raise any floor and never lower one.
+- If the objective touches a sensitive domain (auth, payments, secrets, data, infra),
+  security is at least L2, review is at least standard, and QA runs.
+- Auth, payments and secrets force L3.
+- `signoff_domains` force L4, and the loop asks a human before ship.
+- A low-confidence answer or a Jev outage falls back to the pre-3.2 behavior, so the
+  worst case is yesterday's run.
+- Gates, proof-of-test, the escalation denylist and the budget cap are untouched: a
+  decision model decides *how much effort to spend*, never *whether the work is correct*.
+
+**Private and auditable.**
+- Only allowlisted, typed facts are sent. Code, logs, files and the environment never
+  are, and anything secret-shaped fails closed.
+- Reach Jev directly (`route: typesafe`) or through Cloudflare Workers AI
+  (`route: cloudflare`, zero data retention).
+- Every decision and the run's outcome go to `.loop-engineer/decisions.jsonl`, and a
+  resumed run replays them instead of asking again.
+
+```yaml
+decision:
+  backend: jev                 # jev (falls back to rules) | rules (offline)
+  route: cloudflare            # typesafe (TYPESAFE_API_KEY) | cloudflare (CLOUDFLARE_ACCOUNT_ID + _API_TOKEN)
+  min_confidence: 0.7
+  max_attempts: 3
+  floors: {security: L1, review: light}
+  signoff_domains: [payments, infra, auth, secrets]
+  tiers:
+    - model: qwen2.5-coder:7b
+    - model: kimi-k2.7-code:cloud
+```
+
+Absent a `decision:` section, every run behaves exactly as in 3.1.
+
+---
+
 ## Configuration
 
 `loop-engineer init` writes `loop-engineer.yaml` from the committed
@@ -270,6 +328,7 @@ guardrails:
 
 # ledger:  { run_cap_usd: 10, month_cap_usd: 200 }   # $ caps + notify hook (optional)
 # ensemble: { n: 2 }                                  # competing attempts per hard slice
+# decision: { backend: jev, route: cloudflare }       # 3.2 staffing controller (see above)
 ```
 
 `loop-engineer.yaml` is gitignored (machine-specific); the `.example.yaml` is the committed
@@ -383,7 +442,8 @@ Guardrails are enforced **in code, not just prompts**:
 - **Workspace jail** — writes can't escape the workspace; protected paths (`.git`, `.env`,
   keys, `*secret*`, `*credentials*`) are refused; file size/count caps.
 - **Verification allowlist** — only known test/lint/build commands run, with shell
-  metacharacters rejected and `ANTHROPIC_API_KEY`/`AUTH_TOKEN` scrubbed from the child env.
+  metacharacters rejected and model keys (`ANTHROPIC_API_KEY`/`AUTH_TOKEN`,
+  `TYPESAFE_API_KEY`, `CLOUDFLARE_API_TOKEN`) scrubbed from the child env.
 - **Escalation denylist** — risky verbs (`deploy`, `drop table`, `rm -rf`, force-push) and
   sensitive paths (`secrets/`, `*/auth/`, `*payment*`) park the run for human approval.
 - Generated output is treated as **untrusted data** — never executed, never followed as
@@ -408,7 +468,19 @@ Guardrails are enforced **in code, not just prompts**:
 - ✅ **Diverse ensembles** (per-attempt temperature/model) and a **run journal** that
   reconstructs any run post-hoc.
 
+**Shipped in 3.1 – 3.2:**
+
+- ✅ **Agentic in-place builders** (`claude_code`, `gemini`) with transient-failure retry, and
+  builder commits un-committed before harvest.
+- ✅ **Gates that must prove their output** (`expect` / `min_count`) and **review findings that
+  can block** a slice at a chosen severity.
+- ✅ **Staffing controller** — a decision model sizes the team above deterministic quality
+  floors, with a cheap→strong tier cascade.
+
 **Still ahead — honestly labeled _not yet built_:**
+
+- **Calibration from the decision journal** — learn per-decision confidence thresholds from
+  logged outcomes, so the loop knows which of its own staffing calls it can trust.
 
 - **Observability & control plane** (a separate repo) — a multi-channel notifier
   (Telegram / WhatsApp / Slack), a live web dashboard, and a mobile PWA, all consumers of the
@@ -423,7 +495,9 @@ Full detail in [CHANGELOG.md](CHANGELOG.md). The short story:
 
 | Version | Milestone | What it added |
 |---|---|---|
-| **3.0.0** | Any model, verifiable everywhere _(current)_ | Native `openai_compat` provider (any OpenAI-compatible endpoint), design-first architect stage + architecture-conformance gates, `ui` gates with a failure observer, brownfield task modes (`build`/`enhance`/`fix`/`audit`), diverse ensembles, and the run journal — over `uvx`, with a real proof-of-test demo. |
+| **3.2.0** | Jev staffing controller _(current)_ | A decision model sizes each run above deterministic quality floors: risk tier, security depth L1–L4, QA/DevOps on/off, review depth, tests, architect, attempts and model tier per slice, and stall recovery. Adds a cheap→strong tier cascade, human sign-off for chosen domains, a decision journal replayed on resume, and TypeSafe or Cloudflare (zero-retention) routes. |
+| `3.1.x` | Agentic builders | In-place `claude_code`/`gemini` builders, transient retry, `escalation.allow_tokens`, un-commit before harvest, additive proof-of-test, gate `expect`/`min_count`, blocking review severities. |
+| **3.0.0** | Any model, verifiable everywhere | Native `openai_compat` provider (any OpenAI-compatible endpoint), design-first architect stage + architecture-conformance gates, `ui` gates with a failure observer, brownfield task modes (`build`/`enhance`/`fix`/`audit`), diverse ensembles, and the run journal — over `uvx`, with a real proof-of-test demo. |
 | **2.0.0** | Deep research + GA | Mandatory research/provenance gate (tag coverage + citation re-fetch), `research_blocked` state, and the `2.0` line's GA. |
 | `2.0.0-alpha.3` | Think-tank interview (2.0-M3) | Six-slot `refine --interview` (purpose/users/constraints/metrics/anti-goals/risks) + a measurability lint that rejects vague done-whens. |
 | `2.0.0-alpha.2` | Next protocol (2.0-M2) | The session **dispatcher loop** — `loop-engineer next` emits one artifact-derived envelope per step; crash/reset-safe. |
@@ -437,7 +511,7 @@ Full detail in [CHANGELOG.md](CHANGELOG.md). The short story:
 ## Tests
 
 ```bash
-python3 -m pytest -q        # the engine's own suite — 747 tests in 3.0.0
+python3 -m pytest -q        # the engine's own suite — 1,044 tests in 3.2.0
 ```
 
 The engine is Python 3.12-tested, `>= 3.9` compatible, and depends only on `pyyaml` at runtime.

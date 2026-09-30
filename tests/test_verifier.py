@@ -9,7 +9,7 @@ from kickass_loop_engineer.gates import GateSpec
 from kickass_loop_engineer.guardrails import VerificationPolicy, VerificationResult
 from kickass_loop_engineer.verifier import (
     prove, ProofRecord, run_gate, run_gates, EvidenceRecord, GatesResult,
-    OBSERVER_CAP, OBSERVER_TIMEOUT_SECONDS,
+    OBSERVER_CAP, OBSERVER_TIMEOUT_SECONDS, _is_test_path,
 )
 
 
@@ -28,6 +28,39 @@ def _init_repo():
         f.write("__pycache__/\n*.pyc\n")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "init")
+    return repo
+
+
+def _write(repo, relpath, text):
+    """Write *text* to *relpath* inside *repo*, creating parent directories."""
+    full = os.path.join(repo, relpath)
+    parent = os.path.dirname(full)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(full, "w") as handle:
+        handle.write(text)
+    return full
+
+
+def _read(repo, relpath):
+    """Return the text of *relpath* inside *repo*."""
+    with open(os.path.join(repo, relpath)) as handle:
+        return handle.read()
+
+
+def _stash_entries(repo):
+    """Return the repo's stash list as text (empty string when nothing is stashed)."""
+    done = subprocess.run(["git", "stash", "list"], cwd=repo, check=True,
+                          capture_output=True, text=True)
+    return done.stdout.strip()
+
+
+def _green_suite_repo():
+    """A repo whose committed test suite is ALREADY green (the additive case)."""
+    repo = _init_repo()
+    _write(repo, "test_existing.py", "def test_existing():\n    assert True\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "green suite")
     return repo
 
 
@@ -71,6 +104,122 @@ class ProofOfTestTests(unittest.TestCase):
         self.assertTrue(record.green_before)
         self.assertFalse(record.red_when_reverted)
         self.assertFalse(record.proven)
+
+
+
+class TestPathClassifierTests(unittest.TestCase):
+    """The proof's revert scope hinges on telling test files from source."""
+
+    def test_classifies_paths_by_directory_component_and_basename(self):
+        cases = [
+            ("tests/test_thing.py", True),          # test directory
+            ("tests/helpers/factory.py", True),     # anything under tests/
+            ("test/fixtures/data.json", True),      # singular test directory
+            ("src/pkg/tests/test_x.py", True),      # nested test directory
+            ("test_feature.py", True),              # test_ basename
+            ("src/pkg/feature_test.py", True),      # _test.py basename
+            ("conftest.py", True),
+            ("src/pkg/conftest.py", True),
+            ("src/pkg/feature.py", False),
+            ("README.md", False),
+            ("docs/testing.md", False),             # 'testing' is not a test dir
+            ("src/testing/runner.py", False),
+            ("src/latest/protest.py", False),       # 'test' only as a substring
+            ("contest.py", False),
+        ]
+        for path, expected in cases:
+            with self.subTest(path=path):
+                self.assertEqual(_is_test_path(path), expected)
+
+
+class AdditiveProofTests(unittest.TestCase):
+    """Proof-of-test reverts only NON-test files, so additive slices can prove.
+
+    An additive slice adds new tests AND the source they exercise to a repo whose
+    existing suite is already green. Reverting the whole change would leave that
+    green suite behind and report a genuine pass as unproven.
+    """
+
+    def test_additive_change_reverts_source_only_and_proves(self):
+        repo = _green_suite_repo()
+        _write(repo, "impl.py", "def answer():\n    return 42\n")
+        _write(repo, "test_feature.py",
+               "from impl import answer\n\n"
+               "def test_answer():\n    assert answer() == 42\n")
+        record = prove(gate_cmd="pytest -q", workspace=repo)
+        self.assertTrue(record.green_before, record.error)
+        # The new test survives the stash, so the missing source turns it red.
+        self.assertTrue(record.red_when_reverted, record.error)
+        self.assertTrue(record.green_after, record.error)
+        self.assertTrue(record.proven)
+        self.assertEqual(record.skipped_reason, "")
+        self.assertTrue(os.path.exists(os.path.join(repo, "impl.py")))
+        self.assertTrue(os.path.exists(os.path.join(repo, "test_feature.py")))
+        self.assertEqual(_stash_entries(repo), "")
+
+    def test_modified_test_file_survives_the_proof_unchanged(self):
+        repo = _init_repo()
+        _write(repo, "impl.py", "def answer():\n    return 0\n")
+        _write(repo, "test_answer.py",
+               "from impl import answer\n\n"
+               "def test_answer():\n    assert answer() == 0\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-m", "baseline")
+        _write(repo, "impl.py", "def answer():\n    return 42\n")
+        _write(repo, "test_answer.py",
+               "from impl import answer\n\n"
+               "def test_answer():\n    assert answer() == 42\n")
+        record = prove(gate_cmd="pytest -q", workspace=repo)
+        self.assertTrue(record.proven, record.error)
+        self.assertIn("== 42", _read(repo, "test_answer.py"))
+        self.assertIn("return 42", _read(repo, "impl.py"))
+
+    def test_tests_only_change_reports_proof_not_applicable(self):
+        repo = _green_suite_repo()
+        _write(repo, "test_more.py", "def test_more():\n    assert 1 + 1 == 2\n")
+        record = prove(gate_cmd="pytest -q", workspace=repo)
+        self.assertTrue(record.green_before, record.error)
+        self.assertTrue(record.skipped_reason)
+        self.assertIn("test", record.skipped_reason)
+        self.assertFalse(record.red_when_reverted)
+        self.assertFalse(record.proven)
+        self.assertFalse(record.aborted)
+        self.assertEqual(record.error, "")
+        self.assertEqual(_stash_entries(repo), "")
+
+    def test_run_gate_keeps_gate_verdict_when_proof_is_not_applicable(self):
+        repo = _green_suite_repo()
+        _write(repo, "test_more.py", "def test_more():\n    assert 1 + 1 == 2\n")
+        evidence = run_gate("unit", "pytest -q", workspace=repo, with_proof=True)
+        self.assertTrue(evidence.passed)                 # the gate's own verdict stands
+        self.assertIsNotNone(evidence.proof)
+        self.assertFalse(evidence.proof.proven)          # journal still says proven=False
+        self.assertTrue(evidence.to_dict()["proof"]["skipped_reason"])
+
+    def test_source_change_that_stays_green_when_reverted_is_not_proven(self):
+        repo = _green_suite_repo()
+        _write(repo, "unused.py", "VALUE = 1\n")
+        record = prove(gate_cmd="pytest -q", workspace=repo)
+        self.assertTrue(record.green_before, record.error)
+        self.assertFalse(record.red_when_reverted)
+        self.assertFalse(record.proven)
+        self.assertEqual(record.skipped_reason, "")      # applicable, and it failed
+        evidence = run_gate("unit", "pytest -q", workspace=repo, with_proof=True)
+        self.assertFalse(evidence.passed)
+
+    def test_staged_rename_falls_back_to_a_whole_tree_revert(self):
+        repo = _green_suite_repo()
+        _write(repo, "helper.py", "VALUE = 1\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-m", "helper")
+        _git(repo, "mv", "helper.py", "renamed.py")      # the source path leaves the index
+        record = prove(gate_cmd="pytest -q", workspace=repo)
+        self.assertFalse(record.aborted, record.error)
+        self.assertTrue(record.green_after, record.error)
+        self.assertEqual(_stash_entries(repo), "")       # no leaked stash entry
+        self.assertTrue(os.path.exists(os.path.join(repo, "renamed.py")))
+        self.assertFalse(os.path.exists(os.path.join(repo, "helper.py")))
+
 
 
 class EvidenceTests(unittest.TestCase):

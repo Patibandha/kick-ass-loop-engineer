@@ -69,7 +69,48 @@ class WorktreeManager:
         self._counter += 1
         path = os.path.join(self._base_dir, f"{slug}-{self._counter}")
         self._git("worktree", "add", "--detach", path, "HEAD")
+        self._seed_uncommitted(os.path.abspath(path))
         return os.path.abspath(path)
+
+    def _seed_uncommitted(self, worktree_path: str) -> None:
+        """Copy the workspace's uncommitted changes into a fresh worktree.
+
+        The symmetric counterpart of :meth:`promote`: a promoted winner lands
+        in the main workspace as uncommitted files, so a later slice's
+        worktree checked out from bare HEAD would not see the modules the
+        previous slice just added — and any code importing them fails its
+        gate. Seeding applies the same selection promote uses (tracked
+        modifications and untracked additions from ``git status --porcelain``,
+        never ``.loop-engineer/``, never deletions, never symlinks), so a
+        chain of slices builds on the accumulated uncommitted state.
+
+        Best-effort by design: a file that cannot be copied is skipped rather
+        than failing worktree creation — the gate then reports honestly
+        against whatever state the worktree has.
+        """
+        try:
+            out = subprocess.run(
+                ["git", "-C", self._repo_root, "-c", "core.quotepath=false",
+                 "status", "--porcelain", "--untracked-files=all"],
+                check=True, capture_output=True, text=True, timeout=60,
+            ).stdout
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+            return
+        for line in out.splitlines():
+            rel = line[3:].strip().strip('"')
+            if not rel or rel.startswith(".loop-engineer/") or rel == ".loop-engineer":
+                continue
+            src_path = os.path.join(self._repo_root, rel)
+            if os.path.islink(src_path) or not os.path.isfile(src_path):
+                continue
+            target = os.path.abspath(os.path.join(worktree_path, rel))
+            if os.path.commonpath([worktree_path, target]) != worktree_path:
+                continue
+            try:
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                shutil.copy2(src_path, target)
+            except OSError:
+                continue
 
     def remove(self, path: str) -> None:
         """Remove a worktree that was previously created by :meth:`create`.

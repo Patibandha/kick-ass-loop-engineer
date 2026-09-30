@@ -1,5 +1,14 @@
 """Builder and reviewer agents that drive the iterative loop.
 
+The builder works one of two ways, decided by the provider it wraps:
+
+* A BLIND provider answers with ``=== FILE: ... ===`` blocks that the engine
+  parses and writes (``Builder.build`` + ``BUILDER_SYSTEM``).
+* An AGENTIC provider (``provider.edits_in_place``) is handed the workspace
+  directory and edits it with its own tools (``Builder.build_in_place`` +
+  ``AGENTIC_BUILDER_SYSTEM``); the engine then harvests whatever changed and
+  applies the same write guardrails to it.
+
 The builder produces or revises files toward the objective; the reviewer examines
 the result against the completion criteria and returns concrete findings (defects)
 with feedback. Each agent wraps its own provider, so they can run on different
@@ -43,6 +52,20 @@ UI_BUILDER_RULES = (
     "never as console noise.\n"
     "- Keep the app reachable at the URL the ui gate tests (default "
     "http://localhost:3000) with a single dev-server command."
+)
+
+AGENTIC_BUILDER_SYSTEM = (
+    "You are a senior software engineer working INSIDE a git worktree: your "
+    "current working directory IS the workspace. Implement the goal by reading "
+    "the repository and editing files directly with your tools. Write complete "
+    "files with docstrings and typed exception handling; write or update tests "
+    "first and run the project's test, lint and type commands named in the "
+    "brief before you finish. Never touch .git, .env, secrets, credentials, or "
+    "anything outside the working directory. Do NOT print file blocks or diffs. "
+    "Finish with a short summary that lists every file you created or modified. "
+    "Never run git commit, git stash, git reset or git checkout: leave every "
+    "change uncommitted in the working tree — the engine harvests, verifies and "
+    "promotes it."
 )
 
 REVIEWER_SYSTEM = (
@@ -124,6 +147,9 @@ class Builder:
     def build(self, objective: Objective, feedback: str = "") -> ProviderResult:
         """Produce a build round for the objective, incorporating feedback.
 
+        The FILE-block path, for providers that cannot touch the filesystem:
+        the reply is text the engine parses and writes.
+
         When ``context_window`` is set and the estimated prompt size —
         ``(len(system_prompt) + len(brief)) // 4``, a chars-per-token
         heuristic — exceeds 75% of it, a WARNING naming the model, the
@@ -139,15 +165,64 @@ class Builder:
             The provider's result for this round.
         """
         brief = objective.builder_brief(feedback)
-        if self.context_window > 0:
-            estimated = (len(self.system_prompt) + len(brief)) // _CHARS_PER_TOKEN
-            if estimated > self.context_window * _CONTEXT_WARN_RATIO:
-                model = getattr(self.provider, "model", None) or self.provider.name
-                logger.warning(
-                    "builder prompt is ~%d tokens, over 75%% of %s's %d-token "
-                    "context window — the model may truncate or drop context",
-                    estimated, model, self.context_window)
+        self._warn_if_prompt_crowds_context(self.system_prompt, brief)
         return self.provider.complete(self.system_prompt, brief)
+
+    def build_in_place(self, objective: Objective, feedback: str = "", *,
+                       cwd: str) -> ProviderResult:
+        """Let an agentic provider implement the objective inside *cwd*.
+
+        The AGENTIC path, for providers that declare ``edits_in_place``: the
+        provider edits the directory with its own tools and returns a prose
+        summary, which the engine keeps only for the audit trail — the files
+        it actually changed are discovered by diffing the directory.
+
+        The system prompt is :data:`AGENTIC_BUILDER_SYSTEM`, plus
+        :data:`UI_BUILDER_RULES` when this builder's configured prompt carries
+        them (a ui gate is in play). Non-UI runs stay byte-identical to the
+        bare agentic prompt.
+
+        Args:
+            objective: The goal and completion criteria to build toward.
+            feedback: Reviewer feedback from the previous round, if any.
+            cwd: The workspace directory the provider must edit (in the
+                pipeline: the attempt's git worktree).
+
+        Returns:
+            The provider's result — a summary of the edits it made.
+
+        Raises:
+            ProviderError: When the provider cannot edit in place, or when the
+                edit turn fails.
+        """
+        system = AGENTIC_BUILDER_SYSTEM
+        if UI_BUILDER_RULES in self.system_prompt:
+            system = f"{AGENTIC_BUILDER_SYSTEM}\n\n{UI_BUILDER_RULES}"
+        brief = objective.builder_brief(feedback)
+        self._warn_if_prompt_crowds_context(system, brief)
+        return self.provider.edit(system, brief, cwd=cwd)
+
+    def _warn_if_prompt_crowds_context(self, system: str, brief: str) -> None:
+        """WARN when the estimated prompt size passes 75% of the context window.
+
+        Purely advisory: the call always proceeds, because accumulated
+        feedback can legitimately grow large and truncation behavior is the
+        model's, not the engine's, to decide. A ``context_window`` of 0 (an
+        unknown model) disables the check.
+
+        Args:
+            system: The system prompt about to be sent.
+            brief: The user brief about to be sent.
+        """
+        if self.context_window <= 0:
+            return
+        estimated = (len(system) + len(brief)) // _CHARS_PER_TOKEN
+        if estimated > self.context_window * _CONTEXT_WARN_RATIO:
+            model = getattr(self.provider, "model", None) or self.provider.name
+            logger.warning(
+                "builder prompt is ~%d tokens, over 75%% of %s's %d-token "
+                "context window — the model may truncate or drop context",
+                estimated, model, self.context_window)
 
 
 class Reviewer:

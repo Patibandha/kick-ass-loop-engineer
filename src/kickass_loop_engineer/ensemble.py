@@ -102,6 +102,7 @@ def run_ensemble(
     build_fn: Callable[[int], tuple],
     gate_fn: Callable[[str], object],
     specs: Optional[list] = None,
+    stop_on_pass: bool = False,
 ) -> list:
     """Run ``n`` attempts and return their gate evidence as ``Attempt`` records.
 
@@ -112,6 +113,9 @@ def run_ensemble(
         specs: Optional per-attempt :class:`AttemptSpec` list; ``specs[i]``
             rides on attempt ``i`` (``None`` leaves every ``Attempt.spec``
             unset — back-compat).
+        stop_on_pass: Stop after the first attempt whose evidence passed
+            (a cheap-to-strong model cascade: the cheapest passing attempt
+            wins and the stronger attempts are never paid for).
 
     Returns:
         A list of ``Attempt`` (selection is the caller's job via ``select_winner``).
@@ -124,4 +128,6 @@ def run_ensemble(
         attempts.append(Attempt(id=str(i), workspace=workspace,
                                 evidence=evidence, file_count=file_count,
                                 spec=spec))
+        if stop_on_pass and getattr(evidence, "passed", False):
+            break
     return attempts

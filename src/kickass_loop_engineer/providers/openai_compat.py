@@ -5,6 +5,10 @@ DeepSeek, Mistral, Qwen, OpenRouter, Groq, Together) and every mainstream local
 runtime (Ollama, llama.cpp server, LM Studio, vLLM, Jan) — only base_url, model,
 and the API-key env var change. The key is read from an env var NAME so secrets
 never live in config files. Uses only the standard library.
+
+Requests run through :func:`~.base.retry_transient`, so a rate limit (429), a
+5xx, or a read timeout is retried with exponential backoff; a 4xx, malformed
+JSON, or a response carrying no choices fails immediately.
 """
 
 from __future__ import annotations
@@ -16,7 +20,13 @@ import urllib.error
 import urllib.request
 from typing import Optional, Sequence, Union
 
-from .base import Provider, ProviderError, ProviderResult, as_int
+from .base import (
+    Provider,
+    ProviderError,
+    ProviderResult,
+    as_int,
+    retry_transient,
+)
 
 _ERROR_BODY_PREVIEW_CHARS = 500
 _IMAGE_MIME_BY_EXTENSION = {
@@ -65,6 +75,8 @@ class OpenAICompatProvider(Provider):
         temperature: Optional[float] = None,
         max_tokens: int = 0,
         timeout_seconds: float = 300.0,
+        retry_attempts: int = 3,
+        retry_base_delay: float = 2.0,
     ) -> None:
         """Initialize the OpenAI-compatible provider.
 
@@ -82,6 +94,9 @@ class OpenAICompatProvider(Provider):
             timeout_seconds: Per-request timeout. The 300s default deliberately
                 matches the Anthropic provider — long completions on slow local
                 endpoints are normal.
+            retry_attempts: Total requests allowed per call when the failure is
+                transient (see :func:`~.base.is_transient_error`).
+            retry_base_delay: Seconds before the first retry; doubled each time.
         """
         self.model = model
         self.base_url = base_url.rstrip("/")
@@ -89,6 +104,8 @@ class OpenAICompatProvider(Provider):
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout_seconds = timeout_seconds
+        self.retry_attempts = retry_attempts
+        self.retry_base_delay = retry_base_delay
 
     def complete(self, system: str, user: str, images: Sequence[str] = ()) -> ProviderResult:
         """Send a chat-completions request and return the result.
@@ -107,9 +124,10 @@ class OpenAICompatProvider(Provider):
             token split from ``usage``, and their sum as ``tokens``.
 
         Raises:
-            ProviderError: On an unreadable image path, HTTP or network
-                failure, malformed JSON, or a response carrying no usable
-                choices.
+            ProviderError: On an unreadable image path, a permanent HTTP or
+                parsing failure (4xx, malformed JSON, no usable choices), or
+                once every retry of a transient one (429/5xx, connection
+                failure, read timeout) is spent.
         """
         user_content: Union[str, list] = user
         if images:
@@ -128,6 +146,29 @@ class OpenAICompatProvider(Provider):
         if self.max_tokens > 0:
             payload["max_tokens"] = self.max_tokens
 
+        return retry_transient(
+            lambda: self._request(payload),
+            attempts=self.retry_attempts,
+            base_delay=self.retry_base_delay,
+        )
+
+    def _request(self, payload: dict) -> ProviderResult:
+        """Perform one chat-completions request and parse the response body.
+
+        The Authorization header is resolved per request so a key rotated
+        between retries is picked up.
+
+        Args:
+            payload: The JSON body to POST to ``/chat/completions``.
+
+        Returns:
+            The parsed ``ProviderResult``.
+
+        Raises:
+            ProviderError: On an HTTP error (the status is kept in the message
+                so the transient classifier can read it), a network failure, a
+                read timeout, malformed JSON, or a response with no choices.
+        """
         headers = {"Content-Type": "application/json"}
         api_key = os.environ.get(self.api_key_env, "")
         if api_key:
@@ -147,6 +188,12 @@ class OpenAICompatProvider(Provider):
             raise ProviderError(f"openai_compat HTTP {exc.code}: {detail}") from exc
         except urllib.error.URLError as exc:
             raise ProviderError(f"openai_compat request failed: {exc}") from exc
+        except TimeoutError as exc:
+            # urlopen wraps a CONNECT timeout in URLError, but a socket read
+            # timeout mid-response propagates bare — uncaught it escapes as a
+            # non-ProviderError and skips both the retry and the ledger.
+            raise ProviderError(
+                f"openai_compat timed out after {self.timeout_seconds:.0f}s") from exc
         except (json.JSONDecodeError, ValueError) as exc:
             raise ProviderError(f"openai_compat returned malformed JSON: {exc}") from exc
 

@@ -21,12 +21,23 @@ class GateSpec:
         observe: Optional observation command run (under gate authority, with
             observer caps) when the gate fails; its output lands on the
             failing evidence record and feeds the builder's retry context.
+        expect: Optional regex the gate's OUTPUT must match for the gate to
+            pass. An exit code alone cannot tell a green suite from one that
+            ran nothing: on 2026-09-21 a container built from a cache holding
+            zero-byte files collected NO tests, exited 0, and passed the gate,
+            while every command in that image exited 0 because every module was
+            empty. ``expect`` is how a gate states what its output must prove.
+        min_count: Optional floor on the FIRST capture group of *expect*, read
+            as an integer — the test count that must not shrink. Requires
+            *expect*; a suite that quietly halves is a regression, not a pass.
     """
 
     name: str = "unit"
     command: str = "python3 -m pytest -q"
     prove: bool = True
     observe: str = ""
+    expect: str = ""
+    min_count: int | None = None
 
 
 GATES: dict = {

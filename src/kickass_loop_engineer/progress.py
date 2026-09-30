@@ -90,6 +90,7 @@ class ProgressReporter:
         if not self.events_path:
             return
         try:
+            os.makedirs(os.path.dirname(self.events_path) or ".", exist_ok=True)
             with open(self.events_path, "a", encoding="utf-8") as handle:
                 handle.write(json.dumps(asdict(event)) + "\n")
         except OSError:

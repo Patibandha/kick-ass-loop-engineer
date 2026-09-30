@@ -23,6 +23,10 @@ ARTIFACT_SCHEMAS: dict = {
     "security_v1": {"artifact": ".loop-engineer/security.md",
                     "marker": re.compile(r"^VERDICT: (PASS|FAIL)", re.MULTILINE),
                     "hint": "a 'VERDICT: PASS|FAIL' line"},
+    # Human sign-off demanded by an L4 staffing plan (3.2) before ship.
+    "signoff_v1": {"artifact": ".loop-engineer/signoff.md",
+                   "marker": re.compile(r"^APPROVED: \S", re.MULTILINE),
+                   "hint": "an 'APPROVED: <name>' line written after human sign-off"},
     "ship_v1": {"artifact": ".loop-engineer/ship.md",
                 "marker": re.compile(r"^(SHIPPED:|BLOCKED:)", re.MULTILINE),
                 "hint": "a 'SHIPPED: …' or 'BLOCKED: …' line"},

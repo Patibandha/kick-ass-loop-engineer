@@ -18,14 +18,19 @@ import os
 import shutil
 import subprocess
 from collections import deque
+from dataclasses import replace
 
 from .architect import Design, generate_design, render_importlinter
 from .archmap import write_archmap
 from .audit import AUDIT_SELECT_BUDGET_BYTES, fallback_files, run_audit
 from .auditor import classify_run
 from .autonomy import AutonomyLevel, ReadinessChecklist, resolve_level
+from .decision.broker import DecisionBroker
+from .decision.controller import StaffingController
+from .decision.log import DecisionLog
+from .decision.staffing import TESTS_CONSTRAINT
 from .decompose import generate_slices
-from .ensemble import run_ensemble, select_winner
+from .ensemble import default_specs, run_ensemble, select_winner
 from .escalation import should_escalate
 from .gates import GateSpec
 from .modes import detect_mode
@@ -36,7 +41,7 @@ from .pricing import estimate_cost
 from .providers.base import ProviderError
 from .repomap import assemble_context, repo_map, select_files
 from .reproduce import FIX_MODE_RULES, generate_repro, repro_check_command
-from .review import CrossModelReviewError
+from .review import CrossModelReviewError, blocking_findings, write_slice_review
 from .session import BuildSession
 from .terminal import RunOutcome, TerminalState
 from .verifier import OBSERVER_CAP, EvidenceRecord, GatesResult, run_gates
@@ -96,6 +101,16 @@ def _detect_python_package(workspace: str) -> str | None:
     return None
 
 
+def _failed_gate_names(attempts: list) -> list:
+    """Return the sorted names of every gate that failed across *attempts*."""
+    names = set()
+    for attempt in attempts:
+        for rec in getattr(attempt.evidence, "records", []) or []:
+            if not getattr(rec, "passed", True):
+                names.add(str(getattr(rec, "gate", "")))
+    return sorted(n for n in names if n)
+
+
 class Orchestrator:
     """Drives the full verified pipeline for one objective to a single outcome.
 
@@ -119,7 +134,11 @@ class Orchestrator:
                  architect_mode: str = "auto", diagram_validator=None,
                  visual_cfg=None, visual_provider=None,
                  mode: str = "auto",
-                 attempt_specs=None, builder_factory=None) -> None:
+                 escalation_max_files: int = 10,
+                 escalation_allow_tokens: tuple = (),
+                 attempt_specs=None, builder_factory=None,
+                 review_block_on: tuple = (),
+                 decision_settings=None, decision_chain=None) -> None:
         """Wire the pipeline dependencies.
 
         Args:
@@ -152,7 +171,8 @@ class Orchestrator:
                 estimate per-call spend when a provider reports ``cost_usd=0``;
                 ``None`` keeps reported-cost-only accounting.
             format_retries: Corrective builder calls allowed per build round
-                when a non-empty response contains no valid FILE blocks
+                when a turn is unusable — a non-empty response carrying no
+                valid FILE blocks, or an agentic turn that changed no files
                 (threaded to every ``BuildSession``); ``0`` disables the retry.
             architect_mode: Smart-trigger mode for the architect stage —
                 ``"auto"`` (run only when decomposition yields 2+ slices),
@@ -182,6 +202,21 @@ class Orchestrator:
                 ``.loop-engineer/findings.md`` — no decompose, no ensemble,
                 no worktrees, no promote, and no file outside
                 ``.loop-engineer/`` is created or modified).
+            escalation_max_files: Blast-radius cap. A slice whose winning
+                attempt touches MORE than this many files escalates to
+                ``APPROVAL_REQUIRED`` instead of promoting autonomously. The
+                default of 10 preserves the historical behavior; scaffolding
+                objectives that legitimately create a whole project tree in one
+                slice need a higher bound, set via the ``escalation.max_files``
+                config key. Raising it widens how much unreviewed change one
+                slice can land, so treat it as a deliberate risk decision.
+            escalation_allow_tokens: Risky keywords exempted from the
+                escalation denylist's KEYWORD layer for this run, from the
+                ``escalation.allow_tokens`` config key. An objective that
+                legitimately says "deploy the systemd unit" or "model spend
+                cap" otherwise ends the run in ``APPROVAL_REQUIRED`` on its own
+                wording. Protected paths, the file-count cap and the attempt
+                cap are never relaxable, so the blast-radius guards stand.
             attempt_specs: Optional per-attempt
                 ``ensemble.AttemptSpec`` list (diverse ensembles); ``specs[i]``
                 shapes attempt ``i``'s builder. ``None`` keeps every attempt
@@ -192,6 +227,13 @@ class Orchestrator:
                 attempt's builder from its spec (config knowledge stays in
                 the factory, out of the orchestrator). ``None`` keeps the
                 shared ``builder``.
+            decision_settings: Optional ``DecisionSettings``. Together with
+                ``decision_chain`` it arms the 3.2 staffing controller: a
+                decision model sizes the run (security depth, QA/DevOps,
+                review depth, tests, architect, attempts and model tier per
+                slice, one stall recovery) ABOVE deterministic floors. ``None``
+                keeps every pre-3.2 behavior byte-identical.
+            decision_chain: The ``DecisionChain`` answering staffing questions.
         """
         self.objective = objective
         self.workspace = workspace
@@ -216,6 +258,11 @@ class Orchestrator:
         self.visual_cfg = visual_cfg
         self.visual_provider = visual_provider
         self.mode = mode
+        self.escalation_max_files = escalation_max_files
+        self.escalation_allow_tokens = tuple(escalation_allow_tokens or ())
+        # Severities that STOP a slice promoting. Empty keeps review advisory,
+        # which is the behaviour every existing run has.
+        self.review_block_on = tuple(review_block_on or ())
         self.attempt_specs = attempt_specs
         self.builder_factory = builder_factory
         # Journal: reviewer-side corrective format retries. The retry loop
@@ -246,6 +293,15 @@ class Orchestrator:
         # erases what the previous review taught the next slice).
         self._feedback_entries: deque = deque(maxlen=_FEEDBACK_MAX_ENTRIES)
         self._slice_evidence: list = []  # winner GatesResult per completed slice
+        self.staffing = None
+        if decision_settings is not None and decision_chain is not None:
+            broker = DecisionBroker(decision_chain, DecisionLog(workspace),
+                                    run_id=run_id,
+                                    min_confidence=decision_settings.min_confidence,
+                                    on_cost=self._record_cost,
+                                    on_event=self.cursor.emit)
+            self.staffing = StaffingController(broker, decision_settings,
+                                               workspace, run_id)
         self._total_slices = 0
         self._completed_slices = 0
         self._total_attempts = 0
@@ -287,9 +343,12 @@ class Orchestrator:
                     # the design.
                     design_md = self._resume_design_md()
                     slices = self._decompose(design_md)
+                    self._plan_run_staffing(slices)
                     if not design_md and self._should_architect(len(slices)):
                         design_md = self._architect_stage()
                         slices = self._decompose(design_md)
+                    if self.staffing is not None:
+                        self.staffing.plan_slices(slices, self.ensemble_n)
                     if design_md:
                         self._append_architecture_gate(design_md)
                     self._total_slices = len(slices)
@@ -528,12 +587,40 @@ class Orchestrator:
         return slices
 
     def _should_architect(self, slice_count: int) -> bool:
-        """Apply the smart trigger: off never, on always, auto on 2+ slices."""
+        """Apply the smart trigger: off never, on always, auto on 2+ slices.
+
+        In ``auto`` mode an armed staffing controller's architect decision
+        replaces the slice-count heuristic; explicit on/off always wins.
+        """
         if self.architect_mode == "off":
             return False
         if self.architect_mode == "on":
             return True
+        if self.staffing is not None and self.staffing.plan.architect is not None:
+            return self.staffing.plan.architect
         return slice_count >= 2
+
+    def _plan_run_staffing(self, slices: list) -> None:
+        """Decide run-level staffing and apply it (no-op when disarmed).
+
+        Only ever TIGHTENS what config set: review block-on severities are a
+        union with the configured ones, and a tests requirement is appended
+        to the objective's constraints.
+        """
+        if self.staffing is None:
+            return
+        plan = self.staffing.plan_run(
+            objective=self.objective, slices=slices, mode=self.mode,
+            architect_auto=self.architect_mode == "auto",
+            block_on=self.review_block_on)
+        self.review_block_on = plan.block_on(self.review_block_on)
+        if plan.write_tests and TESTS_CONSTRAINT not in self.objective.constraints:
+            constraints = "\n".join(
+                c for c in (self.objective.constraints, TESTS_CONSTRAINT) if c)
+            self.objective = replace(self.objective, constraints=constraints)
+        self.cursor.set_stage("staffing", "planned", {
+            "risk": plan.risk, "security": plan.security, "review": plan.review,
+            "qa": plan.qa, "devops": plan.devops, "write_tests": plan.write_tests})
 
     def _architect_stage(self) -> str:
         """Run the architect: one ledgered design call, persisted as design.md.
@@ -835,7 +922,9 @@ class Orchestrator:
             provider/promotion failure mapped to ``BLOCKED``) that ends the run.
         """
         # 4. Pre-build escalation on the slice's planned work.
-        escalate, reason = should_escalate(action=slice_.objective)
+        escalate, reason = should_escalate(
+            action=slice_.objective,
+            allow_tokens=self.escalation_allow_tokens)
         if escalate:
             self.notifier.notify(build_event(
                 self.run_id, "escalation", "escalation_required", "escalate",
@@ -859,6 +948,14 @@ class Orchestrator:
         # sequential build(i) -> gate(i) contract above is what lets it stamp
         # gate events with the attempt index build_fn last recorded here.
         current_attempt = {"index": -1}
+        # Per-slice staffing: the controller sizes the ensemble (and climbs a
+        # cheap->strong tier ladder with early stop); disarmed keeps config.
+        slice_specs, cascade = self.attempt_specs, False
+        attempts_n = self.ensemble_n
+        if self.staffing is not None:
+            slice_specs, cascade = self.staffing.attempt_specs(
+                slice_.role, list(self.attempt_specs or default_specs(self.ensemble_n)))
+            attempts_n = len(slice_specs)
 
         def observation_text():
             # Total injected observation text is capped like a single observer run.
@@ -886,8 +983,8 @@ class Orchestrator:
             # spec via the injected factory (temperature/model diversity lives
             # entirely in construction — the gates still pick the winner).
             builder = self.builder
-            spec = (self.attempt_specs[i]
-                    if self.attempt_specs and i < len(self.attempt_specs)
+            spec = (slice_specs[i]
+                    if slice_specs and i < len(slice_specs)
                     else None)
             if spec is not None and self.builder_factory is not None:
                 builder = self.builder_factory(spec)
@@ -935,11 +1032,23 @@ class Orchestrator:
             return gates_result
 
         try:
-            attempts = run_ensemble(self.ensemble_n, build_fn, gate_fn,
-                                    specs=self.attempt_specs)
+            attempts = run_ensemble(attempts_n, build_fn, gate_fn,
+                                    specs=slice_specs, stop_on_pass=cascade)
 
             # 7. No verified winner: nothing passed its gate.
             winner = select_winner(attempts)
+            if winner is None and self.staffing is not None:
+                # One decision-gated recovery attempt (stronger tier when a
+                # ladder exists), fed the failing attempts' observations.
+                recovery = self.staffing.recovery_spec(
+                    slice_.role, list(slice_specs or []),
+                    _failed_gate_names(attempts))
+                if recovery is not None:
+                    slice_specs = list(slice_specs or []) + [recovery]
+                    index = len(slice_specs) - 1
+                    attempts += run_ensemble(1, lambda _i: build_fn(index), gate_fn,
+                                             specs=[recovery])
+                    winner = select_winner(attempts)
             if winner is None:
                 self._losing_attempts += len(attempts)
                 self._remove_attempts(attempts)
@@ -960,8 +1069,11 @@ class Orchestrator:
             winner_files = attempt_files.get(winner.workspace, [])
 
             # 6. Post-build escalation on the winner's actual footprint.
-            escalate, reason = should_escalate(paths=winner_files,
-                                               files_touched=winner.file_count)
+            escalate, reason = should_escalate(
+                paths=winner_files,
+                files_touched=winner.file_count,
+                max_files=self.escalation_max_files,
+                allow_tokens=self.escalation_allow_tokens)
             if escalate:
                 self._remove_attempts(attempts)
                 self.notifier.notify(build_event(
@@ -983,10 +1095,40 @@ class Orchestrator:
             # slice's winner review — stamp the slice before the call.
             self._review_retry_context = {"stage": "review",
                                           "slice": slice_.role}
-            review = self.reviewer.review(slice_objective, snapshot)
-            self._record_cost("review", review.result)
-            findings = list(review.findings)
+            try:
+                review = self.reviewer.review(slice_objective, snapshot)
+            except ProviderError as exc:
+                # Review is advisory (findings only, never a verdict): a
+                # reviewer outage must degrade to zero findings, not kill a
+                # run whose winner already passed every gate.
+                logger.warning(
+                    "winner review for slice %r skipped (provider failure: "
+                    "%s) — advisory stage, promoting without findings",
+                    slice_.role, exc)
+                review = None
+            if review is not None:
+                self._record_cost("review", review.result)
+                findings = list(review.findings)
+            else:
+                findings = []
             findings.extend(self._visual_findings(slice_objective, winner.workspace))
+            # File the review before acting on it. A review is evidence, and a
+            # clean one is evidence too: "found nothing" and "never ran" must
+            # not look the same to whoever reads the run afterwards.
+            write_slice_review(
+                self.workspace, slice_.role, findings,
+                reviewer=str(getattr(self.reviewer, "model", "") or "reviewer"),
+                skipped_reason="" if review is not None else "review did not run",
+            )
+            blocking = blocking_findings(findings, self.review_block_on)
+            if blocking:
+                # Opt-in: with `review.block_on` configured, a finding at that
+                # severity stops the slice PROMOTING instead of riding along as
+                # feedback. The worktrees go, as they do for oscillation.
+                self._remove_attempts(attempts)
+                return RunOutcome(
+                    TerminalState.BLOCKED,
+                    f"review finding blocks slice '{slice_.role}': {blocking[0]}")
             if self.oscillation.observe(findings):
                 self._remove_attempts(attempts)
                 return RunOutcome(
@@ -1191,6 +1333,11 @@ class Orchestrator:
         """
         success = outcome.state is TerminalState.SUCCESS
         self.playbook.record_attempt(self.objective.goal, success=success)
+        if self.staffing is not None:
+            self.staffing.record_outcome({
+                "state": outcome.state.value, "usd": self.ledger.run_total(),
+                "attempts": self._total_attempts,
+                "losing_attempts": self._losing_attempts})
 
         hit_rate = (self._completed_slices / self._total_slices
                     if self._total_slices else 0.0)

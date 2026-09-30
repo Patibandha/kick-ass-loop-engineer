@@ -114,3 +114,38 @@ class StubServerTestCase(unittest.TestCase):
     def set_canned(self, body: str, status: int = 200) -> None:
         """Set the JSON body (and status) the stub returns to the next request."""
         self.server.canned = (status, body)
+
+
+class FakeDecisionBackend:
+    """Scripted decision backend: answers from a ``{question_id: choice}`` map.
+
+    ``confidence`` applies to every answer; a question absent from ``choices``
+    answers with its default. ``error`` (a DecisionError) is raised instead
+    when set. Every ``(state, question ids)`` call is recorded.
+    """
+
+    name = "fake-decider"
+
+    def __init__(self, choices=None, confidence=0.95, error=None, cost_usd=0.0):
+        self.choices = dict(choices or {})
+        self.confidence = confidence
+        self.error = error
+        self.cost_usd = cost_usd
+        self.calls = []
+
+    def decide(self, state, questions):
+        from kickass_loop_engineer.decision.base import Answer, DecisionBatch
+        self.calls.append((state, [q.id for q in questions]))
+        if self.error is not None:
+            raise self.error
+        answers = {}
+        for q in questions:
+            choice = self.choices.get(q.id, q.default)
+            probs = {o: (0.9 if o == choice else 0.1 / max(len(q.options) - 1, 1))
+                     for o in q.options}
+            if len(q.options) == 1:
+                probs = {choice: 1.0}
+            answers[q.id] = Answer(choice=choice, probabilities=probs,
+                                   confidence=self.confidence)
+        return DecisionBatch(answers=answers, backend=self.name, model="fake-jev",
+                             cost_usd=self.cost_usd, prompt_tokens=100)

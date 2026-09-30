@@ -17,6 +17,250 @@ come from version control.
 
 ---
 
+## 3.2.0 — Jev staffing controller: a decision model sizes the team above quality floors (2026-09-30)
+
+### Added
+- **Staffing controller** (`decision/` package), armed by a `decision:` config
+  section and off when that section is absent. A decision model sizes each run so
+  it spends only the tokens the objective needs. The model is TypeSafe Jev
+  `jev-1.13.0`, pinned, and falls back to deterministic rules. It decides:
+  - risk tier and security depth (L1 gates → L2 AI security review → L3 strict
+    blocking review → L4 human sign-off)
+  - whether QA and DevOps/ship run, review depth, and whether builders must
+    write tests
+  - whether the architect stage runs, for `architect: auto` only
+  - attempts and starting model tier per slice
+  - one decision-gated stall recovery
+- **Deterministic quality floors.** The model optimizes only above these.
+  - Sensitive domains (auth, payments, secrets, data, infra) raise security,
+    review and QA.
+  - Auth, payments, secrets, or critical risk force L3 with strict review.
+  - `decision.signoff_domains` force L4.
+  - `decision.floors` set global minimums, and configured `review.block_on`
+    severities are never removed.
+- **Two routes to Jev** (`decision.route`):
+  - `typesafe` calls TypeSafe directly (`TYPESAFE_API_KEY`).
+  - `cloudflare` goes through Cloudflare Workers AI `typesafe/jev`, with zero
+    data retention and the same $0.042/M input price (`CLOUDFLARE_ACCOUNT_ID` +
+    `CLOUDFLARE_API_TOKEN`).
+- **Tier cascade** (`decision.tiers`). Attempts climb a cheap-to-strong builder
+  ladder and stop at the first pass (`run_ensemble(stop_on_pass=True)`). Every
+  tier is family-checked against the reviewer at config time.
+- **Decision journal** `.loop-engineer/decisions.jsonl`. Each record holds the
+  probabilities, confidence, backend, latency and cost; the run outcome is
+  appended at `_finish`. Decisions are replayed on resume, so a resumed run
+  never re-asks a model.
+- **Staffing plan artifact** `.loop-engineer/staffing.json`. `next` reads it:
+  - it skips QA, security or ship when the plan says so, reported as
+    `staffing.skipped_by_plan` on the terminal envelope;
+  - it asks for sign-off before ship when the plan is L4
+    (`status: "signoff_required"`, new `signoff_v1` artifact
+    `.loop-engineer/signoff.md` holding `APPROVED: <name>`).
+- **Safety of the hosted call.**
+  - The state sent is allowlisted and typed; code, logs, file contents and the
+    environment are never sent.
+  - Anything secret-shaped fails closed to rules.
+  - There is a hard byte cap, strict answer validation, and a `min_confidence`
+    gate.
+  - A circuit breaker stops calls after 3 consecutive failures.
+  - Jev spend is metered through the existing cost ledger (`decide:<site>`).
+
+### Security
+- `TYPESAFE_API_KEY` and `CLOUDFLARE_API_TOKEN` are scrubbed from verification
+  subprocesses (`guardrails.SCRUBBED_ENV_KEYS`) and from the `claude_code` and
+  `gemini_cli` builder CLIs.
+
+### Also in this release (previously unreleased on the 3.1 branch)
+- A review finding at a `review.block_on` severity blocks a slice from
+  promoting, and every review is filed.
+- A gate may declare what its output must prove (`expect` / `min_count`).
+- `claude_code` and `gemini_cli` send the prompt on stdin instead of argv, and a
+  Gemini SUCCESS with no answer counts as a failure.
+
+## 3.1.3 — proof-of-test reverts only non-test files (2026-09-07)
+
+### Fixed
+- **Proof-of-test no longer rejects additive slices.** `prove()` stashed the WHOLE
+  working-tree change, so a slice that adds new tests *and* the source they exercise
+  to a repo whose existing suite is already green lost its new tests to the stash:
+  the old suite stayed green, `red_when_reverted` was `false`, and a genuinely
+  passing attempt was thrown away (observed three times on one project in a day).
+  The revert is now scoped to the changed **non-test** files — new tests stay in the
+  tree and fail exactly as they must without their source. A path is a test path when
+  any directory component is `tests`/`test`, or its basename starts with `test_`, ends
+  with `_test.py`, or is `conftest.py`. Restore is unchanged (auto-pop, and a failed
+  pop still reports `aborted` with the change preserved in the stash), and the
+  side-effect discard before the pop is scoped to the stashed paths so a modified test
+  file is never clobbered. A staged deletion or rename source (which git cannot name in
+  a pathspec stash without leaving a half-saved entry) falls back to the whole-tree
+  revert.
+- **A tests-only change reports "not applicable" instead of failing the gate.** There
+  is no non-test file to revert, so nothing could go red: `ProofRecord.skipped_reason`
+  says so, `run_gate` keeps the gate's own pass/fail result, and the journal still
+  reports `proven: false` — proof is never claimed for a cycle that did not run.
+
+---
+
+## 3.1.2 — builder commits are un-committed before harvest (2026-09-06)
+
+### Fixed
+- **A builder that commits its own work is no longer invisible.** An agentic
+  in-place builder (`claude_code`) that finished a turn with `git commit` had
+  every trace of its work erased from the engine's point of view: `Workspace.harvest`
+  diffs `git status --porcelain` fingerprints, so a committed change reads as
+  "no files changed" (firing the pointless no-edit retry), and proof-of-test's
+  `git stash` cannot make a gate go red for code that already sits in `HEAD`.
+  Two real attempts of paid agentic work were rejected this way. The round now
+  records `HEAD` alongside the fingerprint and rewinds to it after EVERY builder
+  turn — the first and each corrective retry — before harvesting:
+
+  - `Workspace.head()` returns the current `HEAD` sha (git failures raise
+    `WorkspaceError`, never an empty string).
+  - `Workspace.uncommit_to(base_sha)` soft-resets to `base_sha` and unstages
+    (`git reset --soft <base>` then `git reset -q`), so the builder's bytes come
+    back as ordinary modifications and untracked files. It returns how many
+    commits it undid, logs a WARNING naming that count, and returns `0` when
+    `HEAD` never moved. A `HEAD` that moved to a NON-descendant of `base_sha`
+    (a rebase, a branch switch) raises `WorkspaceError` — the engine never
+    rewinds history on a guess.
+  - The round emits an `uncommitted <N> builder commit(s)` progress event when
+    anything was undone.
+
+- **`AGENTIC_BUILDER_SYSTEM`** now tells the builder plainly: never run
+  `git commit`, `git stash`, `git reset` or `git checkout` — leave every change
+  uncommitted in the working tree, because the engine harvests, verifies and
+  promotes it. The prompt is the polite ask; `uncommit_to` is the enforcement,
+  the same division of labour as the write guardrails.
+
+---
+
+## 3.1.1 — escalation.allow_tokens (2026-09-05)
+
+### Added
+- **`escalation.allow_tokens`** — a per-run exemption for the escalation
+  denylist's keyword layer. `should_escalate(action=...)` ended a run in
+  `APPROVAL_REQUIRED` whenever a slice objective contained a risky keyword, and
+  real objectives legitimately contain them: writing a systemd unit file reads
+  as *deploy*, a "model spend cap" reads as *spend*, so a run died on its own
+  wording. Listing the keyword under `escalation.allow_tokens` skips it for that
+  run only:
+
+  ```yaml
+  escalation:
+    allow_tokens: ["deploy"]
+  ```
+
+  The knob is deliberately narrow. Tokens are compared case-insensitively after
+  `.strip()` and must ALREADY be denylist keywords (`deploy`, `delete`,
+  `drop table`, `drop`, `spend`, `rm -rf`, `force push`) — an unknown value, a
+  non-list, or an empty entry is a `RuntimeError` at load time, not a silently
+  ignored line. Each accepted token logs a WARNING (`escalation: risky token
+  'deploy' exempted for this run by config`) so the exemption shows up in the
+  run log rather than staying buried in YAML.
+
+  It relaxes the KEYWORD check and nothing else: protected paths, the
+  file-count cap and the attempt cap always escalate. Configs without the key
+  behave exactly as before.
+  (`escalation.should_escalate(allow_tokens=...)`,
+  `config.escalation_allow_tokens`, `Orchestrator(escalation_allow_tokens=...)`,
+  wired at both escalation call sites.)
+
+## 3.1.0 — agentic in-place builders + transient retry (2026-09-04)
+
+The build stage no longer requires a blind chat model. A provider that drives
+its own tools — `claude_code`, `gemini` — can now BE the pipeline builder: it
+edits the attempt's git worktree directly and the engine harvests the files
+that changed, applies the same write guardrails, and continues with gates,
+proof-of-test, review, and promotion unchanged. Real projects converge because
+the builder can read the repository it is editing instead of re-emitting whole
+files from memory.
+
+The second half of the release is durability: every provider now retries
+transient failures (HTTP 429/5xx/529 "overloaded", rate limits, connection
+resets, timeouts) with exponential backoff, so a busy API costs a round a few
+seconds instead of failing it.
+
+### Added
+- **Agentic in-place builders.** `Provider.edits_in_place` declares that a
+  backend edits the working directory itself; `Provider.edit(system, user,
+  cwd=...)` is the entry point the engine hands a workspace to (the base
+  implementation refuses loudly). `claude_code` and `gemini` implement it.
+- `agents.AGENTIC_BUILDER_SYSTEM` and `Builder.build_in_place(objective,
+  feedback, cwd=...)` — the agentic counterpart of `BUILDER_SYSTEM` /
+  `Builder.build`. `UI_BUILDER_RULES` still ride along when a `ui` gate is
+  configured; non-UI runs stay byte-identical to the bare agentic prompt.
+- `Workspace.fingerprint()` — sha256 per file that `git status --porcelain
+  --untracked-files=all` reports as changed (`.loop-engineer/` excluded,
+  symlinks skipped, renames recorded at their new path). Raises the new
+  `WorkspaceError` on any git failure: an empty fingerprint must never be
+  mistaken for "nothing changed".
+- `Workspace.harvest(before)` — adopts every file whose digest is new or
+  changed since `before`, running the SAME `WritePolicy` the FILE-block path
+  enforces.
+- `BuildSession.build_round` grows the in-place branch: fingerprint → provider
+  edit → harvest, with a `"building (in-place)"` progress stage and a
+  `"no-edit-retry"` stage when a turn changed nothing.
+- Shared transient-failure policy in `providers.base`:
+  `is_transient_error(exc)` classifies a flattened message (HTTP
+  408/425/429/500/502/503/504/529 on word boundaries, "overloaded", any
+  spelling of "rate limit", "too many requests", "timed out"/"timeout",
+  "temporarily unavailable", "connection reset/refused", "server error") and
+  `retry_transient(call, ...)` re-invokes with exponential backoff.
+- Every provider takes `retry_attempts` (3) and `retry_base_delay` (2.0);
+  `claude_code`/`gemini` also take `edit_timeout_seconds` (1800.0) for the
+  longer agentic turn, and `claude_code` takes `edit_tools` and
+  `edit_permission_mode`.
+- The starter config template offers `provider: claude_code` as a builder
+  ("agentic: edits the worktree in place (Claude Max subscription)") and lists
+  `gemini` among the providers.
+
+### Changed
+- **Contract change:** `ClaudeCodeProvider`'s default `allowed_tools` for the
+  PROSE path (`complete`) is now the read-only set `("Read", "Glob", "Grep")`,
+  was `("Read", "Edit", "Bash")`. The roles that call `complete` — decompose,
+  architect, review — must never edit the code they judge; editing happens on
+  the `edit` path, whose tools are configured separately (`edit_tools`,
+  default `("Read", "Edit", "Write", "Glob", "Grep", "Bash")`). Pass
+  `allowed_tools` explicitly to restore the old behavior.
+- **Harvest semantics:** over `max_files_per_round`, `harvest` keeps EVERY
+  surviving file and records an `("(extra files)", "exceeded max files per
+  round: N > cap")` rejection, rather than truncating the way `apply` does.
+  Blast radius is the orchestrator's escalation decision; reverting an
+  arbitrary subset of one coherent agent change would leave the tree
+  consistent for nobody. Guardrail violations are still reverted individually
+  — `git checkout --` for tracked files, deletion for untracked ones.
+- `claude_code`'s non-zero-exit error now falls back to stdout when stderr is
+  silent, so the CLI's own overload text reaches the transient classifier.
+- `anthropic` and `openai_compat` map a bare socket read timeout to
+  `ProviderError` (as `ollama` already did); uncaught it escaped the retry and
+  the ledger both.
+- The docs stop calling `claude_code`/`gemini` "not a pipeline builder"
+  (README providers table, module and class docstrings, config template).
+
+### Tests
+- `tests/test_providers_retry.py` (new): the transient truth table — "HTTP
+  529" and "overloaded_error" are transient, "1529 bytes" and "ANTHROPIC_API_KEY
+  is not set" are not — plus backoff `[2.0, 4.0]`, attempt exhaustion, and the
+  permanent-failure fast path, all with an injected sleep.
+- `tests/test_claude_code.py`: the read-only prose default, `edit` argv/cwd/
+  timeout, a missing `cwd` rejected before any subprocess, a 529 exit retried
+  then succeeding, a permanent exit not retried.
+- `tests/test_gemini_cli.py`: `edit` argv/cwd/timeout and retry behaviour.
+- `tests/test_workspace.py`: fingerprint over untracked/modified files,
+  `.loop-engineer/` exclusion, `WorkspaceError` outside a git repo; harvest
+  ignoring pre-seeded baseline files, reverting protected and oversized files,
+  and keeping everything over the count cap.
+- `tests/test_session.py`: an in-place fake provider yielding a `BuildRound`
+  whose `files_written` names the file it wrote, exactly one no-edit retry
+  with `on_retry` fired once, and usage summed across the retry.
+- `tests/test_pipeline_e2e.py`: the 3.1 exit proof — an agentic builder that
+  writes into the attempt worktree (and tries to write `.env`) converges
+  through decompose → build → gates with proof-of-test → review → promote,
+  with the protected path reverted and never promoted.
+- 875 tests pass (786 before).
+
+---
+
 ## 3.0.0 — any model, verifiable everywhere (2026-07-15)
 
 **3.0.0 GA summary.** The 3.0 arc turns the verified 2.0 loop into a general,

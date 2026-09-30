@@ -43,6 +43,16 @@ class RunEnsembleTests(unittest.TestCase):
         self.assertEqual(len(attempts), 2)
         self.assertEqual(select_winner(attempts).id, "1")
 
+    def test_stop_on_pass_never_builds_attempts_after_the_first_pass(self):
+        built = []
+        def build_fn(i):
+            built.append(i)
+            return (f"/ws/{i}", 1)
+        attempts = run_ensemble(3, build_fn, lambda ws: _ev(ws == "/ws/0"),
+                                stop_on_pass=True)
+        self.assertEqual(built, [0])
+        self.assertEqual(select_winner(attempts).id, "0")
+
 
 class DefaultSpecsTests(unittest.TestCase):
     def test_single_attempt_uses_the_low_baseline_temperature(self):
