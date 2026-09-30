@@ -115,6 +115,7 @@ class RunState:
         """
         self._rounds.append(record)
         try:
+            os.makedirs(self.dir, exist_ok=True)
             with open(self.rounds_path, "a", encoding="utf-8") as handle:
                 handle.write(json.dumps(record) + "\n")
         except OSError:
@@ -151,6 +152,7 @@ class RunState:
                 lines.append(f"- Round {rec.get('round_no', '?')}: {note}")
         lines.append("")
         try:
+            os.makedirs(self.dir, exist_ok=True)
             with open(self.state_md, "w", encoding="utf-8") as handle:
                 handle.write("\n".join(lines))
         except OSError:

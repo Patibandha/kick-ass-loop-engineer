@@ -41,6 +41,7 @@ from typing import Optional
 
 from .artifacts import ARTIFACT_SCHEMAS, validate_artifact
 from .cursor import PipelineCursor
+from .decision.staffing import load_plan
 from .research import (check_citations, check_tag_coverage, parse_research,
                        select_citations)
 from .router import SkillRouter, StageRoute
@@ -64,6 +65,8 @@ _STAGE_SCHEMAS = {
 }
 # Attempts 1..3 dispatch (retry field on 2 and 3); the 4th arrival asks the user.
 _MAX_RETRIES = 2
+# Staffing-plan fields surfaced on the terminal envelope.
+_PLAN_SUMMARY_KEYS = ("risk", "security", "review", "qa", "devops", "domains")
 # Global backstop on the research sub-machine: the per-substage ``attempts``
 # budgets reset whenever the ledger stage flips between "research" and
 # "research_citations", so a session that alternates an incomplete and a
@@ -120,9 +123,23 @@ def emit_next(workspace: str, available: Optional[set] = None, objective: str = 
         return _ask_user_envelope("engine", question, cursor_data.get("run_id", ""),
                                   _cursor_evidence(cursor_data), status=status)
 
-    # 4. review → qa → security → ship.
+    # 4. review → qa → security → ship. A 3.2 staffing plan (written by the
+    #    engine, already clamped by quality floors) may skip optional stages
+    #    and may require human sign-off before ship.
+    plan = load_plan(workspace)
+    staffed_out = _staffing_skips(plan)
     for stage in _POST_ENGINE_STAGES:
-        if stage in ledger["skipped"]:
+        if stage == "ship" and _needs_signoff(workspace, plan):
+            return _ask_user_envelope(
+                "signoff",
+                "Security sign-off required (L4) for sensitive domains "
+                f"{plan.get('domains', [])}. Review .loop-engineer/security.md "
+                "and the change; reply APPROVE to continue (the session then "
+                "writes '.loop-engineer/signoff.md' with 'APPROVED: <name>') "
+                "or describe what must change.",
+                cursor_data.get("run_id", ""), _cursor_evidence(cursor_data),
+                status="signoff_required")
+        if stage in ledger["skipped"] or stage in staffed_out:
             continue
         schema = _STAGE_SCHEMAS[stage]
         ok, reason = validate_artifact(workspace, schema)
@@ -139,10 +156,14 @@ def emit_next(workspace: str, available: Optional[set] = None, objective: str = 
                                mandatory=stage in _MANDATORY)
 
     # 5. every stage valid or explicitly skipped → terminal.
-    return _terminal_envelope(cursor_data.get("run_id", ""),
-                              _cursor_evidence(cursor_data),
-                              ledger["skipped"],
-                              _failed_verdicts(workspace, ledger["skipped"]))
+    skipped = ledger["skipped"] + [s for s in staffed_out if s not in ledger["skipped"]]
+    envelope = _terminal_envelope(cursor_data.get("run_id", ""),
+                                  _cursor_evidence(cursor_data), skipped,
+                                  _failed_verdicts(workspace, skipped))
+    if plan is not None:
+        envelope["staffing"] = {"skipped_by_plan": sorted(staffed_out),
+                                **{k: plan.get(k) for k in _PLAN_SUMMARY_KEYS}}
+    return envelope
 
 
 # --------------------------------------------------------------------------- #
@@ -502,6 +523,28 @@ def _terminal_envelope(run_id: str, evidence: list, skipped: list,
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+def _staffing_skips(plan: Optional[dict]) -> set:
+    """Optional stages the staffing plan decided not to pay for."""
+    if not plan:
+        return set()
+    skips = set()
+    if plan.get("qa") is False:
+        skips.add("qa")
+    if plan.get("security") == "L1":
+        skips.add("security")
+    if plan.get("devops") is False:
+        skips.add("ship")
+    return skips
+
+
+def _needs_signoff(workspace: str, plan: Optional[dict]) -> bool:
+    """True when the plan demands L4 sign-off and no valid sign-off exists."""
+    if not plan or plan.get("security") != "L4":
+        return False
+    ok, _reason = validate_artifact(workspace, "signoff_v1")
+    return not ok
+
+
 def _fallback_route(router: SkillRouter, stage: str) -> Optional[StageRoute]:
     """Return the fallback route for *stage*, or ``None`` when it has none.
 

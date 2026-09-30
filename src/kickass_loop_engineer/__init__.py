@@ -3,7 +3,9 @@
 Provide an objective with checkable completion criteria and kickAssLoopEngineer
 iterates a builder and a reviewer over an isolated workspace until the criteria
 are met or a budget is reached. Builder and reviewer can run on different model
-backends (Claude Code, a local Ollama model such as Kimi, or the Anthropic API).
+backends (Claude Code, a local Ollama model such as Kimi, or the Anthropic API),
+and an agentic backend (Claude Code, Gemini) can edit the workspace directly
+while the engine harvests and guards whatever it changed.
 """
 
 from __future__ import annotations
@@ -46,10 +48,10 @@ from .router import SkillRouter, StageRoute, STAGES
 from .session import BuildRound, BuildSession
 from .state import RunState
 from .terminal import RunOutcome, TerminalState
-from .workspace import Workspace, WriteOutcome
+from .workspace import Workspace, WorkspaceError, WriteOutcome
 from .worktree import WorktreeManager
 
-__version__ = "3.0.0"
+__version__ = "3.2.0"
 
 __all__ = [
     "Objective",
@@ -66,6 +68,7 @@ __all__ = [
     "BuildSession",
     "BuildRound",
     "Workspace",
+    "WorkspaceError",
     "WriteOutcome",
     "WritePolicy",
     "VerificationPolicy",

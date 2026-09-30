@@ -16,3 +16,6 @@ out/
 
 # machine-specific live config (use loopforge.example.yaml as template)
 loop-engineer.yaml
+
+# git worktrees for isolated feature work
+.worktrees/

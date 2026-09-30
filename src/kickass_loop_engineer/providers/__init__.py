@@ -12,11 +12,13 @@ from typing import Type
 from .anthropic_api import AnthropicProvider
 from .base import Provider, ProviderError, ProviderResult
 from .claude_code import ClaudeCodeProvider
+from .gemini_cli import GeminiCliProvider
 from .ollama import OllamaProvider
 from .openai_compat import OpenAICompatProvider
 
 PROVIDERS: dict[str, Type[Provider]] = {
     ClaudeCodeProvider.name: ClaudeCodeProvider,
+    GeminiCliProvider.name: GeminiCliProvider,
     OllamaProvider.name: OllamaProvider,
     AnthropicProvider.name: AnthropicProvider,
     OpenAICompatProvider.name: OpenAICompatProvider,
@@ -27,7 +29,7 @@ def build_provider(name: str, **kwargs) -> Provider:
     """Instantiate a registered provider by name.
 
     Args:
-        name: Registry key, e.g. "claude_code", "ollama", or "anthropic".
+        name: Registry key, e.g. "claude_code", "gemini", "ollama", or "anthropic".
         **kwargs: Constructor arguments for the chosen provider.
 
     Returns:
@@ -48,6 +50,7 @@ __all__ = [
     "ProviderResult",
     "ProviderError",
     "ClaudeCodeProvider",
+    "GeminiCliProvider",
     "OllamaProvider",
     "AnthropicProvider",
     "OpenAICompatProvider",

@@ -4,11 +4,19 @@
 # No API keys are used: the ollama provider talks to the local daemon
 # (localhost:11434, $0 cost); a `:cloud` tag is served via your ollama.com login on
 # the daemon (set up once with `ollama signin`). ANTHROPIC_API_KEY is never used.
+# Two kinds of builder work: a chat model returns whole files the engine writes,
+# while an agentic CLI (claude_code, gemini) edits the worktree itself and the
+# engine harvests whatever changed — the guardrails apply to both.
 
 builder:
-  provider: ollama            # claude_code | ollama | anthropic | openai_compat
+  provider: ollama            # claude_code | gemini | ollama | anthropic | openai_compat
   model: kimi-k2.7-code:cloud  # any pulled Ollama tag
   host: http://localhost:11434
+
+# builder:                     # ALTERNATIVE: an agentic CLI builder
+#   provider: claude_code      # agentic: edits the worktree in place (Claude Max subscription)
+#   model: opus                # optional; omit to use the CLI's default model
+#   family: claude             # the reviewer's family must differ from this one
 
 # builder:                     # ALTERNATIVE: any OpenAI-compatible /chat/completions endpoint
 #   provider: openai_compat
@@ -50,14 +58,16 @@ guardrails:
 #   screenshot_cmd: "npx playwright-cli screenshot http://localhost:3000 shot.png"
 #                              # allowlisted; the LAST token names the image it writes
 #   provider:                  # NESTED provider section, standard form (vision model)
-#     provider: ollama         # claude_code | ollama | anthropic | openai_compat
+#     provider: ollama         # claude_code | gemini | ollama | anthropic | openai_compat
 #     model: llava
 #                              # findings are advisory only (VLM visual judgment is
 #                              # ~50% accurate pairwise): they feed review feedback,
 #                              # NEVER a pass/fail verdict — gates alone decide that
 
-# format_retries: 1            # corrective re-calls per round when a builder/reviewer
-#                              # reply is non-empty but malformed (0 disables)
+# format_retries: 1            # corrective re-calls per round when a turn is
+#                              # unusable: no FILE blocks from a chat builder, no
+#                              # files changed by an agentic one, or a non-empty
+#                              # but malformed reviewer reply (0 disables)
 
 # architect: auto              # design-first architect stage: auto | on | off.
 #                              # auto (default) = smart trigger: decompose runs FIRST,
@@ -99,7 +109,36 @@ guardrails:
 #                              # (a top-level inline `pricing:` map also works);
 #                              # models with no pricing row cost $0 + a warning
 
-# notify:                      # ping on escalation + terminal state (unattended runs)
+# escalation:                  # the denylist that stops an unattended run for a human
+#   max_files: 10              # a slice touching MORE than this escalates (default 10)
+#   allow_tokens: ["deploy"]   # risky keywords this run may use in an objective without
+#                              # escalating — only for objectives that legitimately say
+#                              # them ("deploy the systemd unit", "model spend cap").
+#                              # Each must already be a denylist keyword (deploy, delete,
+#                              # drop table, drop, spend, rm -rf, force push); relaxes the
+#                              # KEYWORD check only — protected paths, the file cap and
+#                              # the attempt cap always escalate.
+
+# decision:                    # 3.2 staffing controller (Jev): sizes the team to save
+#                              # tokens ABOVE deterministic quality floors. Absent = off.
+#   backend: jev               # jev (hosted, falls back to rules) | rules (offline)
+#   model: jev-1.13.0          # pinned; aliases move and would shift tuned decisions
+#   route: typesafe            # typesafe (direct) | cloudflare (Workers AI, zero
+#                              # data retention; needs CLOUDFLARE_ACCOUNT_ID +
+#                              # CLOUDFLARE_API_TOKEN env vars)
+#   # api_key_env: TYPESAFE_API_KEY  # NAME of the key env var (route default if unset)
+#   min_confidence: 0.7        # below this a model answer falls back to the default
+#   max_attempts: 3            # ceiling on attempts per slice the model may pick
+#   floors:                    # the model may go ABOVE these, never below
+#     security: L1             # L1 gates | L2 +AI security review | L3 +strict review
+#     review: light            #   | L4 +human sign-off;  review: light|standard|strict
+#   signoff_domains: [payments]  # touched domains that force L4 human sign-off
+#                              # (auth, payments, secrets, data, infra)
+#   tiers:                     # optional cheap -> strong builder ladder: attempts start
+#     - model: qwen2.5-coder:7b  # at the tier the model picks, climb on failure, and
+#     - model: kimi-k2.7-code:cloud  # stop at the first pass (same keys as attempts)
+
+# notify:                     # ping on escalation + terminal state (unattended runs)
 #   # ntfy.sh (free, no account):
 #   command: 'curl -s -d @- ntfy.sh/your-topic'
 #   # or a webhook (Telegram bot, Slack, etc.):

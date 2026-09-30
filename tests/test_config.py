@@ -636,6 +636,16 @@ class ExampleConfigTests(unittest.TestCase):
         # flat sketch): a provider section under visual, standard provider keys
         self.assertRegex(EXAMPLE_CONFIG, r"#\s+provider:.*\n#\s+provider:")
 
+    def test_example_config_offers_an_agentic_builder(self):
+        from kickass_loop_engineer.config import EXAMPLE_CONFIG
+        self.assertIn("provider: claude_code", EXAMPLE_CONFIG)
+        self.assertIn("agentic: edits the worktree in place (Claude Max subscription)",
+                      EXAMPLE_CONFIG)
+
+    def test_example_config_lists_gemini_among_the_providers(self):
+        from kickass_loop_engineer.config import EXAMPLE_CONFIG
+        self.assertIn("gemini", EXAMPLE_CONFIG)
+
     def test_example_config_observer_comment_is_no_longer_stale(self):
         from kickass_loop_engineer.config import EXAMPLE_CONFIG
         self.assertNotIn("lands in M3", EXAMPLE_CONFIG)
@@ -749,3 +759,78 @@ class TaskModeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestEscalationAllowTokens:
+    """`escalation.allow_tokens` — the per-run exemption for risky keywords."""
+
+    def test_absent_section_returns_empty_tuple(self):
+        from kickass_loop_engineer.config import escalation_allow_tokens
+        assert escalation_allow_tokens({}) == ()
+        assert escalation_allow_tokens({"escalation": {}}) == ()
+        assert escalation_allow_tokens({"escalation": {"allow_tokens": None}}) == ()
+
+    def test_valid_list_parses_normalized(self):
+        from kickass_loop_engineer.config import escalation_allow_tokens
+        parsed = escalation_allow_tokens(
+            {"escalation": {"allow_tokens": ["Deploy", "  SPEND  "]}})
+        assert parsed == ("deploy", "spend")
+
+    def test_duplicate_tokens_are_collapsed(self):
+        from kickass_loop_engineer.config import escalation_allow_tokens
+        parsed = escalation_allow_tokens(
+            {"escalation": {"allow_tokens": ["deploy", "DEPLOY"]}})
+        assert parsed == ("deploy",)
+
+    def test_non_list_raises_runtime_error(self):
+        import pytest
+        from kickass_loop_engineer.config import escalation_allow_tokens
+        with pytest.raises(RuntimeError) as exc:
+            escalation_allow_tokens({"escalation": {"allow_tokens": "deploy"}})
+        assert "allow_tokens" in str(exc.value)
+        assert "'deploy'" in str(exc.value)
+
+    def test_empty_string_entry_raises_runtime_error(self):
+        import pytest
+        from kickass_loop_engineer.config import escalation_allow_tokens
+        with pytest.raises(RuntimeError) as exc:
+            escalation_allow_tokens({"escalation": {"allow_tokens": ["deploy", "  "]}})
+        assert "non-empty" in str(exc.value)
+
+    def test_unknown_token_raises_runtime_error_naming_the_allowed_set(self):
+        import pytest
+        from kickass_loop_engineer.config import escalation_allow_tokens
+        with pytest.raises(RuntimeError) as exc:
+            escalation_allow_tokens({"escalation": {"allow_tokens": ["reboot"]}})
+        message = str(exc.value)
+        assert "'reboot'" in message
+        for known in ("deploy", "delete", "drop table", "spend", "rm -rf",
+                      "force push"):
+            assert known in message
+
+    def test_each_allowed_token_logs_one_warning(self, caplog):
+        import logging as _logging
+        from kickass_loop_engineer.config import escalation_allow_tokens
+        with caplog.at_level(_logging.WARNING,
+                             logger="kickass_loop_engineer.config"):
+            escalation_allow_tokens(
+                {"escalation": {"allow_tokens": ["deploy", "spend"]}})
+        warnings = [r.getMessage() for r in caplog.records
+                    if r.levelno == _logging.WARNING]
+        assert ("escalation: risky token 'deploy' exempted for this run by config"
+                in warnings)
+        assert ("escalation: risky token 'spend' exempted for this run by config"
+                in warnings)
+
+    def test_build_orchestrator_passes_allow_tokens(self):
+        tmp = tempfile.mkdtemp()
+        orch = build_orchestrator({"escalation": {"allow_tokens": ["deploy"]}},
+                                  workspace=tmp, month="2026-07",
+                                  objective=Objective(goal="g", done_when="d"))
+        assert orch.escalation_allow_tokens == ("deploy",)
+
+    def test_build_orchestrator_default_allow_tokens_is_empty(self):
+        tmp = tempfile.mkdtemp()
+        orch = build_orchestrator({}, workspace=tmp, month="2026-07",
+                                  objective=Objective(goal="g", done_when="d"))
+        assert orch.escalation_allow_tokens == ()

@@ -10,7 +10,12 @@ from pathlib import Path
 from unittest import mock
 
 from kickass_loop_engineer.providers import PROVIDERS, build_provider
-from kickass_loop_engineer.providers.base import ProviderError, ProviderResult, as_int
+from kickass_loop_engineer.providers.base import (
+    ProviderError,
+    ProviderResult,
+    as_int,
+    is_transient_error,
+)
 from kickass_loop_engineer.providers.openai_compat import OpenAICompatProvider
 
 _TEST_KEY_ENV = "LOOP_ENGINEER_TEST_OPENAI_KEY"
@@ -121,10 +126,33 @@ class OpenAICompatStubTests(unittest.TestCase):
         self.assertEqual(result.text, "hello from stub")
 
     def test_http_500_raises_provider_error_with_code(self):
+        # A 5xx is transient, so retrying is disabled here to keep the
+        # assertion about the MESSAGE, not about the backoff schedule.
         self.server.canned = (500, json.dumps({"error": "boom"}))
         with self.assertRaises(ProviderError) as ctx:
-            self.complete_without_key(self.make_provider())
+            self.complete_without_key(self.make_provider(retry_attempts=1))
         self.assertIn("500", str(ctx.exception))
+
+    def test_http_500_message_is_classified_transient(self):
+        self.server.canned = (500, json.dumps({"error": "boom"}))
+        with self.assertRaises(ProviderError) as ctx:
+            self.complete_without_key(self.make_provider(retry_attempts=1))
+        self.assertTrue(is_transient_error(ctx.exception))
+
+    def test_transient_status_is_retried_up_to_the_attempt_budget(self):
+        self.server.canned = (429, json.dumps({"error": "rate limit"}))
+        provider = self.make_provider(retry_attempts=3, retry_base_delay=0.0)
+        with self.assertRaises(ProviderError):
+            self.complete_without_key(provider)
+        self.assertEqual(len(self.server.requests), 3)
+
+    def test_malformed_json_is_never_retried(self):
+        self.server.canned = (200, "this is not json {")
+        provider = self.make_provider(retry_base_delay=0.0)
+        with self.assertRaises(ProviderError) as ctx:
+            self.complete_without_key(provider)
+        self.assertFalse(is_transient_error(ctx.exception))
+        self.assertEqual(len(self.server.requests), 1)
 
     def test_malformed_json_raises_provider_error(self):
         self.server.canned = (200, "this is not json {")

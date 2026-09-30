@@ -43,3 +43,74 @@ class EscalationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestWordBoundaryTokens:
+    def test_linuxdeploy_should_not_read_as_deploy(self):
+        from kickass_loop_engineer.escalation import should_escalate
+        ok, reason = should_escalate(
+            action="build the AppImage via linuxdeploy and appimagetool")
+        assert ok is False
+        assert reason == ""
+
+    def test_a_real_deploy_should_still_escalate(self):
+        from kickass_loop_engineer.escalation import should_escalate
+        ok, reason = should_escalate(action="deploy the service to prod")
+        assert ok is True
+        assert "deploy" in reason
+
+
+class TestAllowTokens:
+    """`allow_tokens` relaxes the KEYWORD layer for one run — and nothing else."""
+
+    def test_allowed_token_lets_a_legitimate_objective_through(self):
+        ok, reason = should_escalate(
+            action="deploy the unit file to /etc/systemd/system",
+            allow_tokens=["deploy"])
+        assert ok is False
+        assert reason == ""
+
+    def test_other_risky_tokens_still_escalate(self):
+        ok, reason = should_escalate(action="delete the table",
+                                     allow_tokens=["deploy"])
+        assert ok is True
+        assert "delete" in reason
+
+    def test_allow_list_is_case_insensitive_and_stripped(self):
+        for allowed in (["DEPLOY"], ["  Deploy  "], ["dEpLoY"]):
+            ok, _ = should_escalate(action="deploy the unit file",
+                                    allow_tokens=allowed)
+            assert ok is False, allowed
+
+    def test_none_and_empty_keep_the_default_denylist(self):
+        for allowed in (None, [], ()):
+            ok, reason = should_escalate(action="deploy to prod",
+                                         allow_tokens=allowed)
+            assert ok is True, allowed
+            assert "deploy" in reason
+
+    def test_allow_list_never_relaxes_protected_paths(self):
+        ok, reason = should_escalate(action="deploy the unit file",
+                                     paths=["secrets/key.pem"],
+                                     allow_tokens=["deploy", "delete", "spend"])
+        assert ok is True
+        assert "protected path" in reason
+
+    def test_allow_list_never_relaxes_the_file_cap(self):
+        ok, reason = should_escalate(action="deploy the unit file",
+                                     files_touched=11, max_files=10,
+                                     allow_tokens=["deploy"])
+        assert ok is True
+        assert "too many files" in reason
+
+    def test_allow_list_never_relaxes_the_attempt_cap(self):
+        ok, reason = should_escalate(action="deploy the unit file",
+                                     attempt=3, max_attempts=3,
+                                     allow_tokens=["deploy"])
+        assert ok is True
+        assert "attempt 3" in reason
+
+    def test_spend_can_be_exempted_for_a_model_spend_cap_objective(self):
+        ok, _ = should_escalate(action="add a model spend cap to the ledger",
+                                allow_tokens=["spend"])
+        assert ok is False

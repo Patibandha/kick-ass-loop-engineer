@@ -130,7 +130,8 @@ def _make(tmp_path, *, builder, reviewer, notifier=None, ledger=None,
           cursor=None, memory=None, workspace=None, worktrees=None, gates=None,
           pricing=None, architect_mode="off", diagram_validator=_VALID_DIAGRAMS,
           policy=None, visual_cfg=None, visual_provider=None, mode="build",
-          attempt_specs=None, builder_factory=None):
+          attempt_specs=None, builder_factory=None, escalation_allow_tokens=(),
+          decision_settings=None, decision_chain=None):
     workspace = workspace or _ws(tmp_path)
     memory = memory or Memory(str(tmp_path / "mem.db"))
     cursor = cursor or PipelineCursor(workspace)
@@ -148,7 +149,9 @@ def _make(tmp_path, *, builder, reviewer, notifier=None, ledger=None,
         architect_mode=architect_mode, diagram_validator=diagram_validator,
         policy=policy, visual_cfg=visual_cfg, visual_provider=visual_provider,
         mode=mode,
+        escalation_allow_tokens=escalation_allow_tokens,
         attempt_specs=attempt_specs, builder_factory=builder_factory,
+        decision_settings=decision_settings, decision_chain=decision_chain,
     )
     return orch
 
@@ -225,6 +228,26 @@ def test_risky_slice_objective_escalates(tmp_path, monkeypatch):
 
     assert outcome.state is TerminalState.APPROVAL_REQUIRED
     assert any(e["level"] == "escalate" for e in notifier.events)
+
+
+def test_allowed_token_lets_a_deploy_objective_run(tmp_path, monkeypatch):
+    # Same wording as the test above, with "deploy" exempted for this run:
+    # writing a systemd unit file is not a deployment, so the slice builds.
+    monkeypatch.setattr(orchestrator, "run_gates", _pass_gates)
+    notifier = FakeNotifier()
+    orch = _make(
+        tmp_path,
+        builder=Builder(FakeProvider(["not json", FILE_BLOCK])),
+        reviewer=Reviewer(FakeProvider(["NO FINDINGS"])),
+        notifier=notifier,
+        objective=Objective(goal="deploy the unit file to /etc/systemd/system",
+                            done_when="pytest passes"),
+        escalation_allow_tokens=("deploy",),
+    )
+    outcome = orch.run()
+
+    assert outcome.state is TerminalState.SUCCESS
+    assert not any(e["level"] == "escalate" for e in notifier.events)
 
 
 def test_ledger_cap_stops_run(tmp_path, monkeypatch):

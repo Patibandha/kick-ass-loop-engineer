@@ -1,11 +1,14 @@
 """End-to-end pipeline proofs on a toy repo.
 
-Covers the 2.0-M1 exit criterion (full pipeline with faked providers) and the
+Covers the 2.0-M1 exit criterion (full pipeline with faked providers), the
 3.0-M1 one (the same pipeline wired by ``build_orchestrator`` with builder AND
 reviewer on the ``openai_compat`` provider, served by local HTTP stubs — the
-real provider code path, fully offline).
+real provider code path, fully offline), and the 3.1 one (an AGENTIC builder
+that edits the attempt worktree in place, with the engine harvesting what
+changed).
 """
 import json
+import os
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -20,6 +23,7 @@ from kickass_loop_engineer.notify import Notifier
 from kickass_loop_engineer.objective import Objective
 from kickass_loop_engineer.orchestrator import GateSpec, Orchestrator
 from kickass_loop_engineer.playbook import Playbook
+from kickass_loop_engineer.providers.base import Provider, ProviderResult
 from kickass_loop_engineer.review import CrossModelReviewer
 from kickass_loop_engineer.terminal import TerminalState
 from kickass_loop_engineer.worktree import WorktreeManager
@@ -166,3 +170,80 @@ def test_full_pipeline_via_openai_compat_stubs(tmp_path):
         "builder stub must serve the decompose call and the build round"
     assert len(reviewer_server.requests) >= 1, \
         "reviewer stub must serve the cross-model review"
+
+
+class _InPlaceStubProvider(Provider):
+    """Agentic stub: ``complete`` answers prose, ``edit`` writes files into cwd.
+
+    Stands in for ``claude_code``/``gemini``, which drive their own tools: the
+    pipeline must learn what was built by diffing the worktree, not by parsing
+    the reply.
+    """
+
+    name = "stub-agentic"
+    edits_in_place = True
+
+    def __init__(self, files, model="claude-opus-4-8"):
+        """Store the ``{relative path: contents}`` every edit turn writes."""
+        self.files = dict(files)
+        self.model = model
+        self.completions = []
+        self.edits = []
+
+    def complete(self, system, user):
+        # The decompose call lands here; non-JSON prose exercises the
+        # single-slice fallback, exactly as a real prose reply would.
+        self.completions.append((system, user))
+        return ProviderResult(text="I would split this in two, roughly.",
+                              tokens=5, model=self.model)
+
+    def edit(self, system, user, *, cwd):
+        self.edits.append(cwd)
+        for rel, body in self.files.items():
+            path = os.path.join(cwd, rel)
+            os.makedirs(os.path.dirname(path) or cwd, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(body)
+        return ProviderResult(text=f"Edited: {', '.join(sorted(self.files))}",
+                              tokens=9, cost_usd=0.01, model=self.model)
+
+
+@pytest.mark.slow
+def test_full_pipeline_with_an_agentic_in_place_builder(tmp_path):
+    """3.1 exit proof: an in-place builder converges through the whole pipeline.
+
+    The builder never emits a FILE block — it writes ``feature.py`` into the
+    attempt worktree with its own "tools" and answers in prose. The engine must
+    harvest that file, gate it (with proof-of-test), review, and promote it.
+    """
+    repo = _toy_repo(tmp_path)
+    ws = str(repo)
+    provider = _InPlaceStubProvider(
+        {"feature.py": "def double(x):\n    return x * 2\n",
+         # A guardrail violation the agent "helpfully" writes: it must be
+         # reverted, never promoted.
+         ".env": "OPENAI_API_KEY=leaked\n"})
+    orch = Orchestrator(
+        objective=Objective(goal="implement double()",
+                            done_when="python3 -m pytest -q passes"),
+        workspace=ws, builder=Builder(provider),
+        reviewer=CrossModelReviewer(
+            "claude-opus-4-8", "qwen2.5", Reviewer(FakeProvider(["NO FINDINGS"]))),
+        worktrees=WorktreeManager(ws, base_dir=str(tmp_path / "wts")),
+        ledger=CostLedger(path=str(tmp_path / "ledger.json"), month="2026-07"),
+        notifier=Notifier(), memory=Memory(str(tmp_path / "mem.db")),
+        playbook=Playbook(str(tmp_path / "playbook.json")),
+        cursor=PipelineCursor(ws),
+        gates=[GateSpec(name="unit", command="python3 -m pytest -q", prove=True)],
+        ensemble_n=1, run_id="e2e-agentic",
+    )
+    outcome = orch.run()
+
+    assert outcome.state is TerminalState.SUCCESS, outcome.reason
+    assert (repo / "feature.py").exists(), "harvested winner was promoted"
+    assert not (repo / ".env").exists(), "a protected path must never be promoted"
+    assert provider.edits, "the builder was driven through edit(), not complete()"
+    assert provider.edits[0] != ws, "the builder edits the ATTEMPT worktree"
+    assert provider.completions, "decompose still runs through complete()"
+    ledger = json.loads((tmp_path / "ledger.json").read_text())
+    assert ledger["months"]["2026-07"] > 0, "the agentic round was ledgered"

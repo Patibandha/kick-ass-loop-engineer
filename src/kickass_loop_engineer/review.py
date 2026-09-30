@@ -17,8 +17,15 @@ Usage::
 
 from __future__ import annotations
 
+import json
+import logging
+import os
+import re
+
 from .agents import Review, Reviewer
 from .objective import Objective
+
+logger = logging.getLogger("kickass_loop_engineer.review")
 
 # ---------------------------------------------------------------------------
 # Family detection
@@ -28,6 +35,7 @@ _FAMILY_TOKENS = [
     ("kimi", "kimi"),
     ("qwen", "qwen"),
     ("llama", "llama"),
+    ("gemini", "gemini"),
 ]
 
 
@@ -39,19 +47,20 @@ def model_family(model_name: str) -> str:
     1. ``"kimi"`` if the substring ``kimi`` is present.
     2. ``"qwen"`` if the substring ``qwen`` is present.
     3. ``"llama"`` if the substring ``llama`` is present.
-    4. ``"claude"`` if ``claude`` or ``anthropic`` is present.
-    5. ``"unknown"`` otherwise.
+    4. ``"gemini"`` if the substring ``gemini`` is present.
+    5. ``"claude"`` if ``claude`` or ``anthropic`` is present.
+    6. ``"unknown"`` otherwise.
 
     First matching token wins; this assumes family tokens do not co-occur in a
-    single identifier (true for real model names — kimi/qwen/llama/claude do not
-    appear together).
+    single identifier (true for real model names — kimi/qwen/llama/gemini/claude
+    do not appear together).
 
     Args:
         model_name: The identifier string for a model (e.g. ``"kimi-k2.7-code:cloud"``).
 
     Returns:
         A lowercase family token such as ``"kimi"``, ``"qwen"``, ``"llama"``,
-        ``"claude"``, or ``"unknown"``.
+        ``"gemini"``, ``"claude"``, or ``"unknown"``.
 
     Examples:
         >>> model_family("kimi-k2.7-code:cloud")
@@ -224,3 +233,83 @@ class CrossModelReviewer:
             (empty when clean) and actionable feedback.
         """
         return self.reviewer.review(objective, snapshot)
+
+
+# ---------------------------------------------------------------------------
+# Findings: what blocks, and where they are written down
+# ---------------------------------------------------------------------------
+
+#: Where a slice's review is filed, under the run directory.
+REVIEWS_DIRNAME = "reviews"
+
+
+def blocking_findings(findings, severities) -> list:
+    """Return the findings whose severity appears in *severities*.
+
+    Review is advisory by default and stays that way: with no configured
+    severities this returns nothing, so a run behaves exactly as before. A
+    project that configures ``review.block_on: ["HIGH"]`` is saying a HIGH
+    finding must stop the slice promoting rather than be carried forward as
+    feedback — which is what let a slice promote on 2026-09-21 with HIGH
+    findings standing against it.
+
+    Matching is case-insensitive and on WORD boundaries, so "highlight" is not
+    a HIGH finding. The severity is read out of the finding's own text, which
+    is where reviewers put it (``FINDING: [HIGH] …``).
+
+    Args:
+        findings: The reviewer's findings, one string each.
+        severities: Severity names that block, e.g. ``("HIGH", "CRITICAL")``.
+
+    Returns:
+        The blocking findings, in the order given; empty when none block.
+    """
+    wanted = [str(s).strip() for s in (severities or ()) if str(s).strip()]
+    if not wanted:
+        return []
+    pattern = re.compile(r"\b(" + "|".join(re.escape(s) for s in wanted) + r")\b",
+                         re.IGNORECASE)
+    return [finding for finding in findings or [] if pattern.search(str(finding))]
+
+
+def write_slice_review(workspace: str, slice_role: str, findings, *, reviewer: str,
+                       skipped_reason: str = "") -> str:
+    """Write one slice's review under ``.loop-engineer/reviews`` and return its path.
+
+    Findings used to exist only in the next slice's feedback, so after a run
+    nobody could say what a review had found — or whether it had run at all. A
+    review is evidence and is filed like evidence, INCLUDING a clean one:
+    "found nothing" and "never ran" must not look the same afterwards, which is
+    why ``skipped_reason`` is recorded rather than implied by an empty list.
+
+    Filing a review must never take down a run whose gates already passed, so
+    any OS-level failure is logged and swallowed, and the empty string comes
+    back instead of a path.
+
+    Args:
+        workspace: The run's workspace root.
+        slice_role: The slice this review is about.
+        findings: The reviewer's findings, one string each.
+        reviewer: The reviewing model, for the record.
+        skipped_reason: Why no review ran, when none did.
+
+    Returns:
+        The path written, or ``""`` when it could not be written.
+    """
+    record = {
+        "slice": slice_role,
+        "reviewer": reviewer,
+        "skipped_reason": skipped_reason,
+        "findings": [str(f) for f in findings or []],
+    }
+    try:
+        directory = os.path.join(workspace, ".loop-engineer", REVIEWS_DIRNAME)
+        os.makedirs(directory, exist_ok=True)
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", slice_role) or "slice"
+        path = os.path.join(directory, f"{safe}.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(record, handle, indent=1)
+        return path
+    except (OSError, ValueError, TypeError) as exc:
+        logger.warning("could not file the review for slice %r: %s", slice_role, exc)
+        return ""
