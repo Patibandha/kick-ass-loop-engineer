@@ -305,6 +305,10 @@ decision:
 
 Absent a `decision:` section, every run behaves exactly as in 3.1.
 
+**Full guide:** [docs/jev-staffing-guide.md](docs/jev-staffing-guide.md) covers getting Jev
+access (Cloudflare or TypeSafe), every config key, the quality-floor table, human sign-off,
+the tier cascade, reading the decision journal, privacy, fallbacks, and troubleshooting.
+
 ---
 
 ## Configuration
