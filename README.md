@@ -161,7 +161,20 @@ Exit code mirrors the terminal state: `0` = `success`, `2` = any other terminal 
 config/setup error (e.g. a builder/reviewer same-family clash). The full `RunOutcome`
 (`{state, reason, evidence}`) is printed as JSON on stdout.
 
-**Prefer to drive it from Claude Code?** Install the skill and use `/loop-engineer`:
+**Prefer to drive it from Claude Code?** Install the skill as a **Claude Code plugin**. This
+repo is its own plugin marketplace:
+
+```
+/plugin marketplace add Patibandha/kick-ass-loop-engineer
+/plugin install loop-engineer@kick-ass-loop-engineer
+```
+
+Or from your shell: `claude plugin marketplace add Patibandha/kick-ass-loop-engineer && claude
+plugin install loop-engineer@kick-ass-loop-engineer`. Updates arrive with `/plugin update`. The
+plugin ships the skill; the engine itself still comes from `pip`/`uvx` as shown above.
+
+The skill appears as `/loop-engineer:loop-engineer`. If you'd rather have the plain
+`/loop-engineer` name, copy the skill instead:
 
 ```bash
 mkdir -p ~/.claude/skills && cp -r .claude/skills/loop-engineer ~/.claude/skills/

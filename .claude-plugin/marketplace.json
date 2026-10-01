@@ -1,0 +1,15 @@
+{
+  "name": "kick-ass-loop-engineer",
+  "description": "Kick Ass Loop Engineer — autonomous loop engineering for Claude Code: build, prove, review, and right-size the team.",
+  "owner": {
+    "name": "Patibandha",
+    "url": "https://github.com/Patibandha"
+  },
+  "plugins": [
+    {
+      "name": "loop-engineer",
+      "source": "./",
+      "description": "Autonomous build/verify/review loop with proof-of-test gates, cross-model review, and a Jev staffing controller."
+    }
+  ]
+}
