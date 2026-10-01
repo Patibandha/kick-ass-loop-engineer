@@ -1,0 +1,15 @@
+{
+  "name": "loop-engineer",
+  "displayName": "Kick Ass Loop Engineer",
+  "version": "3.2.0",
+  "description": "Autonomous build/verify/review loop: a cheap builder model codes, executable gates with proof-of-test prove done, a different model family reviews, and a Jev decision model sizes the team above quality floors. Requires the kick-ass-loop-engineer Python engine (pip/uvx).",
+  "author": {
+    "name": "Patibandha",
+    "url": "https://github.com/Patibandha"
+  },
+  "homepage": "https://github.com/Patibandha/kick-ass-loop-engineer",
+  "repository": "https://github.com/Patibandha/kick-ass-loop-engineer",
+  "license": "MIT",
+  "keywords": ["loop-engineering", "autonomous", "verification", "proof-of-test", "multi-agent", "jev", "ollama"],
+  "skills": ["./.claude/skills/"]
+}
