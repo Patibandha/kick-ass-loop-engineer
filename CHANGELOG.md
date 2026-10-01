@@ -11,11 +11,25 @@ come from version control.
 - **PATCH** — fixes, prompt tweaks, guardrail tuning; no behavior contract change.
 - **MINOR** — new capabilities, backward compatible (a new agent role, a provider).
 - **MAJOR** — breaking changes to the CLI, config schema, or skill contract.
-- Bump the version in three places together: `pyproject.toml`,
-  `src/kickass_loop_engineer/__init__.py`, and the SKILL.md frontmatter. Then
+- Bump the version in four places together: `pyproject.toml`,
+  `src/kickass_loop_engineer/__init__.py`, the SKILL.md frontmatter, and
+  `.claude-plugin/plugin.json` (installed plugins stay pinned to that version until it changes). Then
   `git tag vX.Y.Z && git push --tags`.
 
 ---
+
+## Unreleased
+
+### Added
+- **Claude Code plugin + marketplace.** The repo is now installable with
+  `/plugin marketplace add Patibandha/kick-ass-loop-engineer` and
+  `/plugin install loop-engineer@kick-ass-loop-engineer`. `.claude-plugin/plugin.json`
+  points at the existing `.claude/skills/`, so there's no duplicate skill, and both manifests
+  pass `claude plugin validate --strict`.
+
+### Changed
+- Contributor notes moved from `CLAUDE.md` to `.claude/CLAUDE.md`, which Claude Code still
+  loads as project memory, so the plugin root carries no unloaded `CLAUDE.md`.
 
 ## 3.2.0 — Jev staffing controller: a decision model sizes the team above quality floors (2026-09-30)
 
