@@ -33,6 +33,15 @@ reviewer:                      # cross-model reviewer for `loop-engineer run` (f
   provider: ollama
   model: qwen2.5
 
+# reviewer:                    # ALTERNATIVE: an isolated Claude reviewer for a Claude builder
+#   provider: claude_code
+#   model: claude-opus-5-5
+#   isolated: true             # no session/MCP/skills, fresh scratch dir per review
+#   profile_dir: ~/.claude-reviewer  # its own profile: no user CLAUDE.md/memory/plugins
+#                              # (log in once: CLAUDE_CONFIG_DIR=~/.claude-reviewer claude, /login)
+#   allow_same_family: true    # WAIVES the cross-model guard: Claude reviews Claude.
+#                              # Warned and journaled (review_independence_waived) every run.
+
 guardrails:
   max_file_bytes: 1000000
   max_files_per_round: 50
@@ -127,6 +136,9 @@ guardrails:
 #                              # data retention; needs CLOUDFLARE_ACCOUNT_ID +
 #                              # CLOUDFLARE_API_TOKEN env vars)
 #   # api_key_env: TYPESAFE_API_KEY  # NAME of the key env var (route default if unset)
+#   # api_key_keyring: loop-engineer/TYPESAFE_API_KEY  # OR read the key from the OS
+#   #                          # credential store at call time (pip install
+#   #                          # 'kick-ass-loop-engineer[keyring]'); never in env/config
 #   min_confidence: 0.7        # below this a model answer falls back to the default
 #   max_attempts: 3            # ceiling on attempts per slice the model may pick
 #   floors:                    # the model may go ABOVE these, never below
