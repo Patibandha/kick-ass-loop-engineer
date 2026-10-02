@@ -14,7 +14,9 @@ import sys
 
 PACKAGE = "kickass_loop_engineer"
 #: The single third-party dependency the core is allowed to import (lazily).
-ALLOWED_THIRD_PARTY = {"yaml"}
+# Optional, LAZY-only: pyyaml (config) and keyring (Jev keys from the OS
+# credential store, only when decision.api_key_keyring is set).
+ALLOWED_THIRD_PARTY = {"yaml", "keyring"}
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _PKG_DIR = os.path.join(_ROOT, "src", PACKAGE)

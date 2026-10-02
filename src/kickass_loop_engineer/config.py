@@ -76,6 +76,15 @@ reviewer:                      # cross-model reviewer for `loop-engineer run` (f
   provider: ollama
   model: qwen2.5
 
+# reviewer:                    # ALTERNATIVE: an isolated Claude reviewer for a Claude builder
+#   provider: claude_code
+#   model: claude-opus-5-5
+#   isolated: true             # no session/MCP/skills, fresh scratch dir per review
+#   profile_dir: ~/.claude-reviewer  # its own profile: no user CLAUDE.md/memory/plugins
+#                              # (log in once: CLAUDE_CONFIG_DIR=~/.claude-reviewer claude, /login)
+#   allow_same_family: true    # WAIVES the cross-model guard: Claude reviews Claude.
+#                              # Warned and journaled (review_independence_waived) every run.
+
 guardrails:
   max_file_bytes: 1000000
   max_files_per_round: 50
@@ -170,6 +179,9 @@ guardrails:
 #                              # data retention; needs CLOUDFLARE_ACCOUNT_ID +
 #                              # CLOUDFLARE_API_TOKEN env vars)
 #   # api_key_env: TYPESAFE_API_KEY  # NAME of the key env var (route default if unset)
+#   # api_key_keyring: loop-engineer/TYPESAFE_API_KEY  # OR read the key from the OS
+#   #                          # credential store at call time (pip install
+#   #                          # 'kick-ass-loop-engineer[keyring]'); never in env/config
 #   min_confidence: 0.7        # below this a model answer falls back to the default
 #   max_attempts: 3            # ceiling on attempts per slice the model may pick
 #   floors:                    # the model may go ABOVE these, never below
@@ -876,6 +888,8 @@ def build_orchestrator(config: dict[str, Any], *, workspace: str, month: str,
     builder = build_builder(config, pricing=pricing_table)
     reviewer_cfg = dict(config.get("reviewer", {"provider": "ollama", "model": roster["reviewer"]}))
     reviewer_family = str(reviewer_cfg.pop("family", "") or "")
+    # Operator override of the cross-model guard (see review.ensure_cross_model).
+    allow_same_family = reviewer_cfg.pop("allow_same_family", False) is True
     reviewer_provider = build_provider(reviewer_cfg.pop("provider"), **reviewer_cfg)
     builder_model = getattr(builder.provider, "model", None) or builder.provider.name
     reviewer_model = getattr(reviewer_provider, "model", None) or reviewer_provider.name
@@ -884,7 +898,8 @@ def build_orchestrator(config: dict[str, Any], *, workspace: str, month: str,
     format_retries = int(config.get("format_retries", 1))
     cross = CrossModelReviewer(builder_model, reviewer_model,
                                Reviewer(reviewer_provider, format_retries=format_retries),
-                               builder_family=builder_family, reviewer_family=reviewer_family)
+                               builder_family=builder_family, reviewer_family=reviewer_family,
+                               allow_same_family=allow_same_family)
     # Diverse ensembles: one AttemptSpec per attempt, constructed through the
     # injected factory. GUARD LAYER 1 (fail-fast): EVERY spec's provider is
     # constructed right here — provider ctors are pure/no-network — and its
@@ -905,7 +920,8 @@ def build_orchestrator(config: dict[str, Any], *, workspace: str, month: str,
                          or attempt_provider.name)
         ensure_cross_model(str(attempt_model), reviewer_model,
                            builder_family=spec.family,
-                           reviewer_family=reviewer_family)
+                           reviewer_family=reviewer_family,
+                           allow_same_family=allow_same_family)
         attempt_specs.append(spec)
     decision_settings, decision_chain = build_decision(config)
     if decision_settings is not None:
@@ -919,7 +935,8 @@ def build_orchestrator(config: dict[str, Any], *, workspace: str, month: str,
             ensure_cross_model(
                 str(getattr(tier_provider, "model", None) or tier_provider.name),
                 reviewer_model, builder_family=spec.family,
-                reviewer_family=reviewer_family)
+                reviewer_family=reviewer_family,
+                allow_same_family=allow_same_family)
             tiers.append(spec)
         decision_settings = replace(decision_settings, tiers=tuple(tiers))
     visual_cfg, visual_provider = build_visual(config)

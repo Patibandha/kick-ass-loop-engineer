@@ -141,7 +141,19 @@ works today, has a free tier, and doesn't need a TypeSafe account.
 
 1. Get an API key at <https://console.typesafe.ai/keys>. TypeSafe was running an
    early-access waitlist as of 2026-09.
-2. `export TYPESAFE_API_KEY=your-key`
+2. Either `export TYPESAFE_API_KEY=your-key`, or keep the key in your OS credential store
+   and point the engine at it, so the key never sits in an environment variable:
+
+   ```bash
+   pip install 'kick-ass-loop-engineer[keyring]'
+   python -c "import keyring, getpass; keyring.set_password('loop-engineer', 'TYPESAFE_API_KEY', getpass.getpass())"
+   ```
+
+   ```yaml
+   decision:
+     route: typesafe
+     api_key_keyring: loop-engineer/TYPESAFE_API_KEY
+   ```
 
 On the direct route, zero data retention is offered only on TypeSafe's enterprise plans.
 Read [section 12](#12-cost-privacy-and-security) before choosing it.
@@ -205,6 +217,7 @@ decision:
 | `model` | `jev-1.13.0` | Pinned Jev version for the TypeSafe route. |
 | `base_url` | route default | Override the API root, for example for a proxy. |
 | `api_key_env` | route default | **Name** of the environment variable holding the key. The key itself never goes in config. |
+| `api_key_keyring` | unset | `"<service>/<username>"` in the OS credential store (Windows Credential Manager, macOS Keychain, Secret Service). The key is read at call time, held only for the request, and never written to the environment. Needs `pip install 'kick-ass-loop-engineer[keyring]'`. |
 | `account_id_env` | `CLOUDFLARE_ACCOUNT_ID` | Name of the environment variable holding the Cloudflare account ID. |
 | `timeout_s` | `5` | Timeout per request, in seconds. |
 | `retries` | `1` | Extra attempts on 429, 5xx, 529 or a network error. |
