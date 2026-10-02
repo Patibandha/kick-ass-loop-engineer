@@ -76,7 +76,8 @@ def parse_settings(section: dict, tiers: tuple) -> DecisionSettings:
     if max_attempts < 1:
         raise RuntimeError("decision.max_attempts must be >= 1")
     jev = {k: section[k] for k in ("model", "base_url", "api_key_env", "timeout_s",
-                                   "retries", "route", "account_id_env")
+                                   "retries", "route", "account_id_env",
+                                   "api_key_keyring")
            if k in section}
     if jev.get("route", "typesafe") not in ("typesafe", "cloudflare"):
         raise RuntimeError("decision.route must be 'typesafe' or 'cloudflare'")

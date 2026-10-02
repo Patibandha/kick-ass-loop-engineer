@@ -18,14 +18,34 @@ come from version control.
 
 ---
 
-## Unreleased
+## 3.2.1 — keyring-sourced Jev key, isolated Claude reviewer, plugin marketplace (2026-10-02)
 
 ### Added
-- **Claude Code plugin + marketplace.** The repo is now installable with
-  `/plugin marketplace add Patibandha/kick-ass-loop-engineer` and
-  `/plugin install loop-engineer@kick-ass-loop-engineer`. `.claude-plugin/plugin.json`
-  points at the existing `.claude/skills/`, so there's no duplicate skill, and both manifests
-  pass `claude plugin validate --strict`.
+- **Claude Code plugin + marketplace** (`.claude-plugin/plugin.json`, `marketplace.json`),
+  the same manifests as the public mirror. It reuses `.claude/skills/` and passes
+  `claude plugin validate --strict`.
+- **`docs/jev-staffing-guide.md`**: the full guide to running 3.2 with Jev (access, config,
+  floors, sign-off, tier cascade, decision journal, privacy, troubleshooting).
+
+- **`decision.api_key_keyring`**: read the Jev key from the OS credential store
+  (Windows Credential Manager, macOS Keychain, Secret Service) at call time instead of
+  an environment variable. `keyring` is an optional extra
+  (`pip install 'kick-ass-loop-engineer[keyring]'`) and is imported lazily, only when
+  this setting is used.
+- **Provider error text in Jev failures.** An HTTP error now carries the provider's own
+  message, for example `jev HTTP 402: Insufficient balance; add money…`, so
+  `decisions.jsonl` names the real cause.
+
+- **`reviewer.allow_same_family: true`**: an explicit operator waiver of the cross-model
+  guard, so that, for example, an Opus builder can be reviewed by Claude. It's off by
+  default, and only a literal `true` counts. Every waived run logs a warning and
+  journals a `review_independence_waived` event.
+- **Isolated Claude reviewers** (`claude_code` options):
+  - `isolated: true` runs each review with no session persistence, no MCP servers, no
+    skills, project-only settings, and a fresh scratch directory.
+  - `profile_dir` runs it under its own Claude Code profile (`CLAUDE_CONFIG_DIR`), which
+    has no user CLAUDE.md, memory or plugins. This is verified necessary: CLI flags
+    alone still load the user CLAUDE.md.
 
 ### Changed
 - Contributor notes moved from `CLAUDE.md` to `.claude/CLAUDE.md`, which Claude Code still

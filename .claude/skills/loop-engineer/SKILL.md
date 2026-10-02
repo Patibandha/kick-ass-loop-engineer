@@ -8,9 +8,9 @@ description: >-
   Triggers on "loop engineering" or "kick ass loop engineer". DO NOT USE for
   one-shot edits, simple Q&A, or a single build with no verification goal — use
   normal tools for those.
-version: 3.2.0
+version: 3.2.1
 metadata:
-  version: 3.2.0
+  version: 3.2.1
   brand: kickAssLoopEngineer
   engine: kick-ass-loop-engineer
 ---
