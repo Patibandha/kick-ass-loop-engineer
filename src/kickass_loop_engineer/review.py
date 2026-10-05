@@ -99,6 +99,7 @@ def ensure_cross_model(
     reviewer_model: str,
     builder_family: str = "",
     reviewer_family: str = "",
+    allow_same_family: bool = False,
 ) -> tuple:
     """Resolve both families and fail unless they PROVABLY differ.
 
@@ -113,6 +114,10 @@ def ensure_cross_model(
         reviewer_model: Identifier of the model that reviews it.
         builder_family: Optional declared builder family (overrides detection).
         reviewer_family: Optional declared reviewer family (overrides detection).
+        allow_same_family: Operator override (``reviewer.allow_same_family``).
+            A same-family pair is then ALLOWED with a warning instead of
+            raising — the adversarial-independence guarantee is knowingly
+            waived. Default ``False`` keeps the hard guard.
 
     Returns:
         ``(builder_family, reviewer_family)`` as resolved.
@@ -123,6 +128,12 @@ def ensure_cross_model(
     """
     bf = builder_family or model_family(builder_model)
     rf = reviewer_family or model_family(reviewer_model)
+    if bf == rf and allow_same_family:
+        logger.warning(
+            "cross-model guard WAIVED by reviewer.allow_same_family: builder %r and "
+            "reviewer %r share family %r — reviews are not adversarially independent",
+            builder_model, reviewer_model, bf)
+        return bf, rf
     if bf == rf:
         raise CrossModelReviewError(
             f"Builder ({builder_model!r}, family={bf!r}) and reviewer "
@@ -183,10 +194,13 @@ class CrossModelReviewer:
         reviewer: Reviewer,
         builder_family: str = "",
         reviewer_family: str = "",
+        allow_same_family: bool = False,
     ) -> None:
         bf, rf = ensure_cross_model(builder_model, reviewer_model,
                                     builder_family=builder_family,
-                                    reviewer_family=reviewer_family)
+                                    reviewer_family=reviewer_family,
+                                    allow_same_family=allow_same_family)
+        self.allow_same_family: bool = allow_same_family
         self.builder_family: str = bf
         self.reviewer_family: str = rf
         self.reviewer_model: str = reviewer_model
@@ -214,7 +228,8 @@ class CrossModelReviewer:
         model = getattr(provider, "model", None) or provider.name
         ensure_cross_model(str(model), self.reviewer_model,
                            builder_family=family,
-                           reviewer_family=self.reviewer_family)
+                           reviewer_family=self.reviewer_family,
+                           allow_same_family=self.allow_same_family)
 
     def review(self, objective: Objective, snapshot: str) -> Review:
         """Run a cross-model adversarial review of *snapshot* against *objective*.

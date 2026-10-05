@@ -878,6 +878,12 @@ class Orchestrator:
             workspace_isolated=_is_git_repo(self.workspace),
         )
         effective = resolve_level(self.autonomy_requested, checklist)
+        if getattr(self.reviewer, "allow_same_family", False):
+            # Journal the waived guard on every run so it is never silent.
+            self.cursor.emit("review_independence_waived", {
+                "builder_family": getattr(self.reviewer, "builder_family", ""),
+                "reviewer_family": getattr(self.reviewer, "reviewer_family", ""),
+            })
         # M1 records the level and proceeds; behavioral L2 checkpoints arrive with
         # the M2 `next` protocol.
         self.cursor.set_stage("autonomy", effective.value, {"gaps": checklist.gaps()})

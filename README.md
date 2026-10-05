@@ -218,10 +218,16 @@ are **four native backends** — pick any as the builder or the reviewer:
 - **`claude_code`** — headless Claude Code (`claude -p`) for frontier/dispatcher roles.
 
 So ChatGPT / Gemini / Groq / vLLM / any OpenAI-style server are **first-class builders and
-reviewers now**, not shims. The one rule the engine enforces is that **the reviewer is a
+reviewers now**, not shims. The one rule the engine enforces by default is that **the reviewer is a
 different model family than the builder** — checked against the *constructed* provider, not a
 config label — so no model grades its own homework. For a third-party model family detection
 can't classify, declare it with a `family:` key.
+
+Running Claude everywhere? Since 3.2.1 you can opt out explicitly with
+`reviewer.allow_same_family: true`. Every run then logs a warning and journals
+`review_independence_waived`. Independence then has to come from **isolation**: give the
+`claude_code` reviewer `isolated: true` and its own `profile_dir`, a separate Claude Code
+profile with no shared CLAUDE.md, memory, plugins or MCP servers.
 
 ![Any model as the muscle; a different family reviews.](assets/model-agnostic.gif)
 
@@ -281,6 +287,10 @@ first pass**. The stronger models are only paid for when the cheaper ones fail.
   worst case is yesterday's run.
 - Gates, proof-of-test, the escalation denylist and the budget cap are untouched: a
   decision model decides *how much effort to spend*, never *whether the work is correct*.
+
+**Keys can stay out of the environment.** `api_key_keyring: <service>/<name>` reads the Jev
+key from Windows Credential Manager, macOS Keychain or Secret Service at call time
+(`pip install 'kick-ass-loop-engineer[keyring]'`).
 
 **Private and auditable.**
 - Only allowlisted, typed facts are sent. Code, logs, files and the environment never
@@ -512,7 +522,8 @@ Full detail in [CHANGELOG.md](CHANGELOG.md). The short story:
 
 | Version | Milestone | What it added |
 |---|---|---|
-| **3.2.0** | Jev staffing controller _(current)_ | A decision model sizes each run above deterministic quality floors: risk tier, security depth L1–L4, QA/DevOps on/off, review depth, tests, architect, attempts and model tier per slice, and stall recovery. Adds a cheap→strong tier cascade, human sign-off for chosen domains, a decision journal replayed on resume, and TypeSafe or Cloudflare (zero-retention) routes. |
+| **3.2.1** | Isolated reviewers, safer keys _(current)_ | `decision.api_key_keyring` reads the Jev key from the OS credential store at call time. Jev failures carry the provider's own error text. `reviewer.allow_same_family` is an opt-in, journaled waiver so Claude can review Claude, paired with isolated reviewers (`isolated`, `profile_dir`) whose context stays apart from the builders'. Installable as a Claude Code plugin. |
+| **3.2.0** | Jev staffing controller | A decision model sizes each run above deterministic quality floors: risk tier, security depth L1–L4, QA/DevOps on/off, review depth, tests, architect, attempts and model tier per slice, and stall recovery. Adds a cheap→strong tier cascade, human sign-off for chosen domains, a decision journal replayed on resume, and TypeSafe or Cloudflare (zero-retention) routes. |
 | `3.1.x` | Agentic builders | In-place `claude_code`/`gemini` builders, transient retry, `escalation.allow_tokens`, un-commit before harvest, additive proof-of-test, gate `expect`/`min_count`, blocking review severities. |
 | **3.0.0** | Any model, verifiable everywhere | Native `openai_compat` provider (any OpenAI-compatible endpoint), design-first architect stage + architecture-conformance gates, `ui` gates with a failure observer, brownfield task modes (`build`/`enhance`/`fix`/`audit`), diverse ensembles, and the run journal — over `uvx`, with a real proof-of-test demo. |
 | **2.0.0** | Deep research + GA | Mandatory research/provenance gate (tag coverage + citation re-fetch), `research_blocked` state, and the `2.0` line's GA. |
@@ -528,7 +539,7 @@ Full detail in [CHANGELOG.md](CHANGELOG.md). The short story:
 ## Tests
 
 ```bash
-python3 -m pytest -q        # the engine's own suite — 1,044 tests in 3.2.0
+python3 -m pytest -q        # the engine's own suite — 1,057 tests in 3.2.1
 ```
 
 The engine is Python 3.12-tested, `>= 3.9` compatible, and depends only on `pyyaml` at runtime.

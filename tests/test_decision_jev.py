@@ -139,3 +139,58 @@ def test_cloudflare_route_needs_an_account_id(cloudflare, monkeypatch):
 def test_unknown_route_is_rejected():
     with pytest.raises(ValueError):
         JevBackend(route="carrier-pigeon")
+
+
+class _FakeKeyring:
+    """Stands in for the optional ``keyring`` package (no OS credential store)."""
+
+    def __init__(self, store):
+        self.store = store
+        self.lookups = []
+
+    def get_password(self, service, username):
+        self.lookups.append((service, username))
+        return self.store.get((service, username))
+
+
+@pytest.fixture
+def keyring_backend(server, monkeypatch):
+    fake = _FakeKeyring({("loop-engineer", "TYPESAFE_API_KEY"): "vault-key"})
+    monkeypatch.setitem(__import__("sys").modules, "keyring", fake)
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    jev = JevBackend(base_url=f"http://127.0.0.1:{server.server_address[1]}",
+                     api_key_keyring="loop-engineer/TYPESAFE_API_KEY", timeout_s=2,
+                     retries=0)
+    return jev, fake
+
+
+def test_keyring_key_is_read_at_call_time_and_never_enters_the_environment(
+        keyring_backend, server):
+    import os
+    jev, fake = keyring_backend
+    jev.decide({}, QUESTIONS)
+    assert server.requests[0]["auth"] == "Bearer vault-key"
+    assert fake.lookups == [("loop-engineer", "TYPESAFE_API_KEY")]
+    assert "TYPESAFE_API_KEY" not in os.environ
+
+
+def test_missing_keyring_entry_names_the_location_not_a_value(keyring_backend):
+    jev, fake = keyring_backend
+    fake.store.clear()
+    with pytest.raises(DecisionError, match="no credential stored at loop-engineer/TYPESAFE_API_KEY"):
+        jev.decide({}, QUESTIONS)
+
+
+def test_keyring_option_without_the_package_explains_the_extra(server, monkeypatch):
+    monkeypatch.setitem(__import__("sys").modules, "keyring", None)  # import fails
+    jev = JevBackend(base_url=f"http://127.0.0.1:{server.server_address[1]}",
+                     api_key_keyring="loop-engineer/TYPESAFE_API_KEY")
+    with pytest.raises(DecisionError, match=r"kick-ass-loop-engineer\[keyring\]"):
+        jev.decide({}, QUESTIONS)
+
+
+def test_http_errors_carry_the_providers_own_message(backend, server):
+    server.script = [(402, {"errors": [{"message": "Insufficient balance; add money",
+                                        "code": 2021}], "success": False})]
+    with pytest.raises(DecisionError, match="402: Insufficient balance; add money"):
+        backend.decide({}, QUESTIONS)
