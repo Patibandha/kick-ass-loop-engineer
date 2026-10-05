@@ -6,6 +6,7 @@ retry. The real ``claude`` binary is never invoked and no call ever sleeps —
 the retry helper's sleep is injected and recorded.
 """
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -389,3 +390,43 @@ class PromptOnStdinTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClaudeCodeReviewerIsolationTests(unittest.TestCase):
+    """``isolated`` + ``profile_dir`` keep a reviewer's context apart from builders'."""
+
+    def _run(self, **kwargs):
+        seen = {}
+
+        def fake_run(command, **kw):
+            seen["command"] = command
+            seen["cwd"] = kw.get("cwd")
+            seen["env"] = kw.get("env")
+            seen["cwd_existed"] = bool(kw.get("cwd")) and os.path.isdir(kw["cwd"])
+            return _completed()
+
+        with mock.patch("kickass_loop_engineer.providers.claude_code.subprocess.run",
+                        side_effect=fake_run):
+            ClaudeCodeProvider(**kwargs).complete("system", "user")
+        return seen
+
+    def test_isolated_review_adds_isolation_flags_and_a_fresh_scratch_dir(self):
+        seen = self._run(isolated=True)
+        for flag in ("--no-session-persistence", "--strict-mcp-config",
+                     "--disable-slash-commands"):
+            self.assertIn(flag, seen["command"])
+        self.assertEqual(seen["command"][seen["command"].index("--setting-sources") + 1],
+                         "project")
+        self.assertTrue(seen["cwd_existed"])
+        self.assertFalse(os.path.exists(seen["cwd"]), "scratch dir is removed after the call")
+
+    def test_profile_dir_reaches_the_child_as_claude_config_dir(self):
+        seen = self._run(profile_dir="~/.claude-reviewer")
+        self.assertEqual(seen["env"]["CLAUDE_CONFIG_DIR"],
+                         os.path.expanduser("~/.claude-reviewer"))
+
+    def test_default_provider_is_unchanged(self):
+        seen = self._run()
+        self.assertNotIn("--no-session-persistence", seen["command"])
+        self.assertNotIn("CLAUDE_CONFIG_DIR", {k for k in seen["env"]
+                                               if seen["env"][k] != os.environ.get(k)})

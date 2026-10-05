@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tempfile
 from typing import Optional, Sequence
 
 from .base import (
@@ -46,6 +47,10 @@ from .base import (
 #: decompose/architect/review roles, and a reviewer that can edit the code it
 #: reviews is not a reviewer.
 DEFAULT_PROSE_TOOLS = ("Read", "Glob", "Grep")
+
+#: Extra CLI flags for an ``isolated`` prose call (see ``__init__``).
+_ISOLATION_FLAGS = ("--no-session-persistence", "--strict-mcp-config",
+                    "--disable-slash-commands", "--setting-sources", "project")
 
 #: Agentic builder tools for :meth:`ClaudeCodeProvider.edit`. Bash is included
 #: because the brief asks the builder to run the project's test/lint commands
@@ -83,6 +88,8 @@ class ClaudeCodeProvider(Provider):
         edit_timeout_seconds: float = 1800.0,
         retry_attempts: int = 3,
         retry_base_delay: float = 2.0,
+        profile_dir: str = "",
+        isolated: bool = False,
     ) -> None:
         """Initialize the Claude Code provider.
 
@@ -111,6 +118,17 @@ class ClaudeCodeProvider(Provider):
             retry_attempts: Total invocations allowed per call when the
                 failure is transient (see :func:`~.base.is_transient_error`).
             retry_base_delay: Seconds before the first retry; doubled each time.
+            profile_dir: A dedicated Claude Code profile (``CLAUDE_CONFIG_DIR``)
+                for this provider's subprocesses. A separate profile has its
+                own login and NO user CLAUDE.md, memory, plugins, skills, or
+                MCP servers — the only way to keep a reviewer's context apart
+                from the developers' (CLI flags alone still load the user
+                CLAUDE.md). Log in once: ``CLAUDE_CONFIG_DIR=<dir> claude``,
+                then ``/login``. Empty uses the caller's profile.
+            isolated: Prose-path isolation for reviewers: no session
+                persistence, no MCP servers, no skills, project-only settings,
+                and a fresh empty working directory per call (unless ``cwd``
+                is set), so a review sees only the brief it is handed.
         """
         self.model = model
         self.allowed_tools = tuple(allowed_tools)
@@ -124,6 +142,8 @@ class ClaudeCodeProvider(Provider):
         self.edit_timeout_seconds = edit_timeout_seconds
         self.retry_attempts = retry_attempts
         self.retry_base_delay = retry_base_delay
+        self.profile_dir = os.path.expanduser(profile_dir) if profile_dir else ""
+        self.isolated = isolated
 
     def complete(self, system: str, user: str) -> ProviderResult:
         """Run one headless, read-only Claude Code invocation and return the result.
@@ -146,9 +166,17 @@ class ClaudeCodeProvider(Provider):
             command += ["--permission-mode", self.permission_mode]
         if self.model:
             command += ["--model", self.model]
-        return self._run_with_retry(command, prompt=self._prompt(system, user),
-                                    cwd=self.cwd,
-                                    timeout=self.timeout_seconds)
+        if not self.isolated:
+            return self._run_with_retry(command, prompt=self._prompt(system, user),
+                                        cwd=self.cwd,
+                                        timeout=self.timeout_seconds)
+        command += list(_ISOLATION_FLAGS)
+        if self.cwd:
+            return self._run_with_retry(command, prompt=self._prompt(system, user),
+                                        cwd=self.cwd, timeout=self.timeout_seconds)
+        with tempfile.TemporaryDirectory(prefix="le-review-") as scratch:
+            return self._run_with_retry(command, prompt=self._prompt(system, user),
+                                        cwd=scratch, timeout=self.timeout_seconds)
 
     def edit(self, system: str, user: str, *, cwd: str) -> ProviderResult:
         """Let Claude Code edit the workspace at *cwd* and return its summary.
@@ -231,6 +259,8 @@ class ClaudeCodeProvider(Provider):
         if self.force_subscription:
             for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
                 env.pop(key, None)
+        if self.profile_dir:
+            env["CLAUDE_CONFIG_DIR"] = self.profile_dir
 
         try:
             completed = subprocess.run(

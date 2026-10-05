@@ -41,6 +41,8 @@ DEFAULT_TIMEOUT_S = 5.0
 USD_PER_INPUT_TOKEN = 0.042 / 1_000_000
 _ENDPOINT = "/v1/systemone"
 _MS_PER_S = 1000.0
+#: Longest provider error message carried into a ProviderError (and the journal).
+_ERROR_DETAIL_CHARS = 200
 
 
 class JevBackend(DecisionBackend):
@@ -51,6 +53,7 @@ class JevBackend(DecisionBackend):
     def __init__(self, model: str = DEFAULT_MODEL, base_url: str = "",
                  api_key_env: str = "", route: str = "typesafe",
                  account_id_env: str = DEFAULT_ACCOUNT_ID_ENV,
+                 api_key_keyring: str = "",
                  timeout_s: float = DEFAULT_TIMEOUT_S, retries: int = 1,
                  sleep=time.sleep) -> None:
         """Configure the client.
@@ -64,6 +67,11 @@ class JevBackend(DecisionBackend):
                 (``TYPESAFE_API_KEY`` / ``CLOUDFLARE_API_TOKEN``).
             route: ``typesafe`` (direct) or ``cloudflare`` (Workers AI).
             account_id_env: NAME of the env var holding the Cloudflare account id.
+            api_key_keyring: ``"<service>/<username>"`` in the OS credential store
+                (Windows Credential Manager, macOS Keychain, Secret Service).
+                When set, the key is read there at call time, held only for
+                the request, and never written to the environment; the
+                optional ``keyring`` package is imported only then.
             timeout_s: Per-request timeout in seconds.
             retries: Extra attempts on a transient failure (429/5xx/529).
             sleep: Backoff sleep, injectable for tests.
@@ -78,6 +86,7 @@ class JevBackend(DecisionBackend):
         self.base_url = (base_url or _BASE_URLS[route]).rstrip("/")
         self.api_key_env = api_key_env or _KEY_ENVS[route]
         self.account_id_env = account_id_env
+        self.api_key_keyring = api_key_keyring
         self.timeout_s = float(timeout_s)
         self.retries = max(0, int(retries))
         self._sleep = sleep
@@ -89,9 +98,7 @@ class JevBackend(DecisionBackend):
             DecisionError: Missing key, HTTP/network failure, or any answer
                 that fails validation.
         """
-        api_key = os.environ.get(self.api_key_env, "")
-        if not api_key:
-            raise DecisionError(f"{self.api_key_env} is not set")
+        api_key = self._api_key()
         jev_input = {"state": state,
                      "questions": {q.id: _to_jev_question(q) for q in questions}}
         if self.route == "cloudflare":
@@ -113,6 +120,35 @@ class JevBackend(DecisionBackend):
         latency_ms = (time.monotonic() - started) * _MS_PER_S
         return self._parse(body, questions, latency_ms)
 
+    def _api_key(self) -> str:
+        """Return the bearer key from the credential store or the environment.
+
+        Raises:
+            DecisionError: When no key is available (the message names where
+                it looked, never a value).
+        """
+        if self.api_key_keyring:
+            service, _, username = self.api_key_keyring.partition("/")
+            try:
+                import keyring  # optional dependency, only for keyring-sourced keys
+            except ImportError as exc:
+                raise DecisionError(
+                    "api_key_keyring is set but the 'keyring' package is not "
+                    "installed (pip install 'kick-ass-loop-engineer[keyring]')") from exc
+            try:
+                key = keyring.get_password(service, username)
+            except Exception as exc:  # noqa: BLE001 - any backend failure is a miss
+                raise DecisionError(
+                    f"credential store lookup failed for {self.api_key_keyring}: "
+                    f"{type(exc).__name__}") from exc
+            if not key:
+                raise DecisionError(f"no credential stored at {self.api_key_keyring}")
+            return key
+        key = os.environ.get(self.api_key_env, "")
+        if not key:
+            raise DecisionError(f"{self.api_key_env} is not set")
+        return key
+
     def _post(self, url: str, payload: dict, api_key: str) -> dict:
         """POST *payload*; map HTTP failures onto ProviderError for retry."""
         request = urllib.request.Request(
@@ -128,7 +164,9 @@ class JevBackend(DecisionBackend):
         except urllib.error.HTTPError as exc:
             # The status code in the message is what retry_transient classifies
             # (429/5xx/529 retry; 401/422 never do).
-            raise ProviderError(f"jev HTTP {exc.code}") from exc
+            detail = _error_detail(exc)
+            raise ProviderError(
+                f"jev HTTP {exc.code}" + (f": {detail}" if detail else "")) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise ProviderError(f"jev temporarily unavailable: {exc}") from exc
         try:
@@ -174,6 +212,29 @@ def _to_jev_question(question) -> dict:
         "instructions": question.instructions,
         "criteria": {opt: question.criteria.get(opt) for opt in question.options},
     }
+
+
+def _error_detail(exc) -> str:
+    """Return the provider's own error message from an HTTP error body, if any.
+
+    Both TypeSafe and Cloudflare return JSON errors; the message (truncated,
+    single-line) lands in the ProviderError so the decision journal names the
+    real cause (e.g. "Insufficient balance") instead of a bare status code.
+    """
+    try:
+        body = json.loads(exc.read().decode("utf-8", errors="replace") or "{}")
+    except (OSError, ValueError, AttributeError):
+        return ""
+    message = ""
+    if isinstance(body, dict):
+        errors = body.get("errors")
+        if isinstance(errors, list) and errors and isinstance(errors[0], dict):
+            message = str(errors[0].get("message", ""))
+        elif isinstance(body.get("error"), dict):
+            message = str(body["error"].get("message", ""))
+        elif body.get("error") or body.get("message"):
+            message = str(body.get("error") or body.get("message"))
+    return " ".join(message.split())[:_ERROR_DETAIL_CHARS]
 
 
 def _count(value: object) -> int:
