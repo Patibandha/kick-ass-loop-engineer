@@ -369,6 +369,8 @@ template. The pipeline runs with sane defaults even if you delete the optional s
 | `openai_compat` | **Any** OpenAI `/chat/completions` endpoint — ChatGPT, Gemini (OpenAI layer), Grok, DeepSeek, Mistral, Qwen, OpenRouter, Groq, Together, and local runtimes (llama.cpp, LM Studio, vLLM) | Vendor pay-as-you-go / free local |
 | `anthropic` | Anthropic Messages API | Pay-as-you-go API |
 | `claude_code` | Headless Claude Code (`claude -p`) | Subscription credit |
+| `codex_cli` | Headless OpenAI Codex (`codex exec`), family `gpt` | ChatGPT subscription |
+| `agy_cli` (alias `gemini`) | Headless Antigravity (`agy -p`), family `gemini` | Google AI subscription |
 
 For `openai_compat`, only `base_url`, `model`, and `api_key_env` (the env-var *name*) change —
 e.g. OpenAI `https://api.openai.com/v1`, Gemini `https://generativelanguage.googleapis.com/v1beta/openai`,

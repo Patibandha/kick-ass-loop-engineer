@@ -52,7 +52,7 @@ EXAMPLE_CONFIG = """\
 # engine harvests whatever changed — the guardrails apply to both.
 
 builder:
-  provider: ollama            # claude_code | gemini | ollama | anthropic | openai_compat
+  provider: ollama            # claude_code | codex_cli | agy_cli (= gemini) | ollama | anthropic | openai_compat
   model: kimi-k2.7-code:cloud  # any pulled Ollama tag
   host: http://localhost:11434
 
@@ -60,6 +60,11 @@ builder:
 #   provider: claude_code      # agentic: edits the worktree in place (Claude Max subscription)
 #   model: opus                # optional; omit to use the CLI's default model
 #   family: claude             # the reviewer's family must differ from this one
+
+# builder:                     # ALTERNATIVE: Codex on a ChatGPT subscription (agentic, edits in place)
+#   provider: codex_cli        # codex exec; timeouts kill the whole process tree
+#   model: gpt-6-astra         # optional; omit for the CLI default
+#   family: gpt                # detected from gpt/codex names; the reviewer must differ
 
 # builder:                     # ALTERNATIVE: any OpenAI-compatible /chat/completions endpoint
 #   provider: openai_compat
@@ -350,7 +355,7 @@ _ATTEMPT_KEYS = ("model", "temperature", "provider", "family")
 #: Providers whose constructor has NO temperature parameter: an attempt spec's
 #: temperature is stripped (with a once-per-model warning) instead of causing
 #: a TypeError deep inside provider construction.
-_TEMPERATURE_FREE_PROVIDERS = ("claude_code", "anthropic", "gemini")
+_TEMPERATURE_FREE_PROVIDERS = ("claude_code", "anthropic", "gemini", "agy_cli", "codex_cli")
 
 #: Providers whose constructor REQUIRES a ``model`` argument (no default). A
 #: cross-provider attempt spec that switches to one of these MUST name a model,
