@@ -36,7 +36,12 @@ _FAMILY_TOKENS = [
     ("qwen", "qwen"),
     ("llama", "llama"),
     ("gemini", "gemini"),
+    ("gpt", "gpt"),
+    ("codex", "gpt"),
 ]
+
+#: OpenAI o-series reasoning models ("o3", "o4-mini", "openai/o3") are GPT family.
+_O_SERIES = re.compile(r"(^|[/:])o[1-9](-|$)")
 
 
 def model_family(model_name: str) -> str:
@@ -48,8 +53,9 @@ def model_family(model_name: str) -> str:
     2. ``"qwen"`` if the substring ``qwen`` is present.
     3. ``"llama"`` if the substring ``llama`` is present.
     4. ``"gemini"`` if the substring ``gemini`` is present.
-    5. ``"claude"`` if ``claude`` or ``anthropic`` is present.
-    6. ``"unknown"`` otherwise.
+    5. ``"gpt"`` if ``gpt`` or ``codex`` is present, or it is an o-series name (``o3``).
+    6. ``"claude"`` if ``claude`` or ``anthropic`` is present.
+    7. ``"unknown"`` otherwise.
 
     First matching token wins; this assumes family tokens do not co-occur in a
     single identifier (true for real model names — kimi/qwen/llama/gemini/claude
@@ -74,6 +80,8 @@ def model_family(model_name: str) -> str:
     for token, family in _FAMILY_TOKENS:
         if token in lowered:
             return family
+    if _O_SERIES.search(lowered):
+        return "gpt"
     if "claude" in lowered or "anthropic" in lowered:
         return "claude"
     return "unknown"
