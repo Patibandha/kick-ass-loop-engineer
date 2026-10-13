@@ -143,8 +143,12 @@ def slice_questions(slices: list, *, max_attempts: int, default_attempts: int,
 
 def apply_run_choices(plan: StaffingPlan, choices: dict, *, domains: list,
                       security_min: str, review_min: str,
-                      signoff_domains: tuple) -> StaffingPlan:
-    """Clamp the model's run-level choices by the floors into *plan*."""
+                      signoff_domains: tuple, qa_min: str = "auto",
+                      devops_min: str = "auto") -> StaffingPlan:
+    """Clamp the model's run-level choices by the floors into *plan*.
+
+    ``qa_min``/``devops_min`` of ``run`` force that stage on whatever the model chose.
+    """
     plan.domains = list(domains)
     plan.risk = choices.get("risk", "medium")
     if domains and plan.risk == "low":
@@ -161,6 +165,10 @@ def apply_run_choices(plan: StaffingPlan, choices: dict, *, domains: list,
         plan.review = raise_to(plan.review, "strict", REVIEW_LEVELS)
     plan.qa = choices.get("qa", "run") == "run" or bool(domains)
     plan.devops = choices.get("devops", "run") == "run"
+    for stage, minimum in (("qa", qa_min), ("devops", devops_min)):
+        if minimum == "run" and not getattr(plan, stage):
+            setattr(plan, stage, True)
+            plan.floors.append(f"{stage} forced on by the configured floor")
     plan.write_tests = choices.get("tests") == "write_tests" or plan.risk in ("high", "critical")
     if "architect" in choices:
         plan.architect = choices["architect"] == "run"
