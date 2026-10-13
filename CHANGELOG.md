@@ -18,6 +18,21 @@ come from version control.
 
 ---
 
+## 3.3.0 — Codex and Antigravity CLI backends, QA/DevOps floors (2026-10-13)
+
+### Added
+- **`codex_cli` provider**: OpenAI Codex headless (`codex exec`) on a ChatGPT subscription login. `complete`
+  runs in the read-only sandbox (a reviewer never edits); `edit` runs in `workspace-write` rooted at the
+  attempt's worktree. Prompt over stdin, final message from `-o`, `OPENAI_API_KEY` scrubbed so usage never
+  falls back to metered billing.
+- **`agy_cli` provider name**: the spec name for the existing Antigravity-backed `gemini` provider.
+- **Kill-tree CLI runner** (`providers/cli_process.run_cli`): a timeout kills the whole process tree, so an npm
+  `.cmd` shim on Windows can no longer leave the real CLI running and hang the loop.
+- **`gpt` model family**: `gpt`/`codex` names and o-series models are classified, so the cross-model guard can
+  pair Codex with Claude or Gemini and rejects Codex reviewing Codex.
+- **`decision.floors.qa` / `.devops`**: `run` keeps the QA and DevOps/ship stages staffed whatever the decision
+  model picks (default `auto`).
+
 ## 3.2.1 — keyring-sourced Jev key, isolated Claude reviewer, plugin marketplace (2026-10-02)
 
 ### Added
