@@ -68,7 +68,8 @@ class StaffingController:
         apply_run_choices(self.plan, choices, domains=domains,
                           security_min=self.settings.security_min,
                           review_min=self.settings.review_min,
-                          signoff_domains=self.settings.signoff_domains)
+                          signoff_domains=self.settings.signoff_domains,
+                          qa_min=self.settings.qa_min, devops_min=self.settings.devops_min)
         self.plan.save(self.workspace)
         return self.plan
 

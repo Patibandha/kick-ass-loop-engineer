@@ -202,6 +202,8 @@ decision:
   floors:
     security: L1                   # global minimum security level
     review: light                  # global minimum review depth
+    qa: auto                       # run = QA stage always staffed (the model cannot skip it)
+    devops: auto                   # run = DevOps/ship stage always staffed
   signoff_domains: [payments, infra, auth, secrets]   # force L4 human sign-off
   tiers:                           # optional cheap -> strong builder ladder
     - model: qwen2.5-coder:7b
