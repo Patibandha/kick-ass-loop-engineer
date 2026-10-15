@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from typing import Optional
@@ -122,6 +123,33 @@ class VerificationResult:
     error: str = ""
 
 
+#: Files that mark a Python project root; with a ``src/`` folder beside one, gates import that folder first.
+_PYTHON_PROJECT_FILES = ("pyproject.toml", "setup.py", "setup.cfg")
+
+
+def _gate_environment(cwd: str) -> dict:
+    """The scrubbed environment a gate runs in.
+
+    A src-layout Python project gets ``<cwd>/src`` first on ``PYTHONPATH`` so the gate tests the
+    code in THIS workspace (an attempt worktree), not an editable install that points elsewhere.
+    """
+    env = {k: v for k, v in os.environ.items() if k not in SCRUBBED_ENV_KEYS}
+    src = os.path.join(cwd, "src")
+    if os.path.isdir(src) and any(os.path.isfile(os.path.join(cwd, name)) for name in _PYTHON_PROJECT_FILES):
+        env["PYTHONPATH"] = os.pathsep.join(p for p in (src, env.get("PYTHONPATH", "")) if p)
+    return env
+
+
+def _resolve_program(argv: list, env: dict) -> list:
+    """Find the program on the gate's PATH, as a shell would.
+
+    On Windows a bare name is otherwise looked up in the engine's own folder first, so ``python``
+    would run the engine's base interpreter instead of the project's virtualenv.
+    """
+    found = shutil.which(argv[0], path=env.get("PATH")) if argv else None
+    return [found, *argv[1:]] if found else argv
+
+
 @dataclass
 class VerificationPolicy:
     """Constraints on commands the orchestrator may run to verify a round.
@@ -170,10 +198,10 @@ class VerificationPolicy:
             logger.warning("verification rejected: %s (%s)", command, reason)
             return VerificationResult(passed=False, command=command, error=reason)
 
-        env = {k: v for k, v in os.environ.items() if k not in SCRUBBED_ENV_KEYS}
+        env = _gate_environment(cwd)
         try:
             completed = subprocess.run(
-                shlex.split(command),
+                _resolve_program(shlex.split(command), env),
                 cwd=cwd,
                 env=env,
                 capture_output=True,
