@@ -18,7 +18,9 @@ def test_the_gate_program_is_found_on_path_before_the_engines_own_folder(tmp_pat
     bin_dir.mkdir()
     (bin_dir / "python.cmd").write_text("@echo project-venv-python\r\n", encoding="utf-8")
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
-    result = POLICY.run("python -m anything", str(tmp_path))
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    result = POLICY.run("python -m anything", str(workspace))
     assert result.passed and "project-venv-python" in result.stdout_tail
 
 
@@ -47,3 +49,36 @@ def test_a_project_without_pyproject_gets_no_src_path(tmp_path, monkeypatch):
 def test_a_missing_program_is_still_reported_as_not_found(tmp_path):
     result = POLICY.run("probe-tool --version", str(tmp_path))
     assert not result.passed and result.error == "verification tool not found"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="planted .cmd shims are a Windows lookup concern")
+def test_a_program_planted_in_the_workspace_never_runs(tmp_path, monkeypatch):
+    (tmp_path / "probe-tool.cmd").write_text("@echo planted\r\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)  # the engine itself runs with the workspace as its cwd
+    result = POLICY.run("probe-tool --version", str(tmp_path))
+    assert not result.passed and "planted" not in result.stdout_tail
+
+
+@pytest.mark.skipif(os.name != "nt", reason="planted .cmd shims are a Windows lookup concern")
+def test_path_entries_inside_the_workspace_are_skipped(tmp_path, monkeypatch):
+    planted = tmp_path / "tools"
+    planted.mkdir()
+    (planted / "probe-tool.cmd").write_text("@echo planted\r\n", encoding="utf-8")
+    monkeypatch.setenv("PATH", f"{planted}{os.pathsep}{os.environ['PATH']}")
+    result = POLICY.run("probe-tool --version", str(tmp_path))
+    assert not result.passed and result.error == "verification tool not found"
+
+
+def test_relative_path_entries_are_skipped(tmp_path, monkeypatch):
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "rel").mkdir(parents=True)
+    name = "probe-tool.cmd" if os.name == "nt" else "probe-tool"
+    script = elsewhere / "rel" / name
+    script.write_text("@echo relative\r\n" if os.name == "nt" else "#!/bin/sh\necho relative\n", encoding="utf-8")
+    script.chmod(0o755)
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv("PATH", f"rel{os.pathsep}{os.environ['PATH']}")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    result = POLICY.run("probe-tool --version", str(workspace))
+    assert not result.passed and "relative" not in result.stdout_tail

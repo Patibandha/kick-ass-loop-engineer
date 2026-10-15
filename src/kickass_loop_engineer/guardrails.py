@@ -20,7 +20,6 @@ import logging
 import os
 import re
 import shlex
-import shutil
 import subprocess
 from dataclasses import dataclass, field
 from typing import Optional
@@ -140,14 +139,39 @@ def _gate_environment(cwd: str) -> dict:
     return env
 
 
-def _resolve_program(argv: list, env: dict) -> list:
-    """Find the program on the gate's PATH, as a shell would.
+def _program_suffixes(name: str, env: dict) -> list:
+    """Suffixes to try: on Windows only PATHEXT ones (an extensionless file there is a Unix script that
+    CreateProcess cannot run), unless *name* already carries one; elsewhere just the bare name."""
+    if os.name != "nt":
+        return [""]
+    pathext = [e for e in env.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").lower().split(";") if e]
+    return [""] if os.path.splitext(name)[1].lower() in pathext else pathext
 
-    On Windows a bare name is otherwise looked up in the engine's own folder first, so ``python``
-    would run the engine's base interpreter instead of the project's virtualenv.
+
+def _resolve_program(argv: list, env: dict, cwd: str) -> Optional[list]:
+    """Find the program on the gate's PATH, as a shell would, or None when it is not there.
+
+    On Windows a bare name is otherwise looked up in the engine's own folder (and its current
+    directory) first, so ``python`` would run the engine's base interpreter instead of the
+    project's virtualenv. Only absolute PATH folders OUTSIDE the workspace are searched: a builder
+    must not be able to plant its own ``python`` or ``pytest`` and forge a green gate. A name with
+    a folder in it is left as written (the allowlist already matched it).
     """
-    found = shutil.which(argv[0], path=env.get("PATH")) if argv else None
-    return [found, *argv[1:]] if found else argv
+    if not argv or os.path.dirname(argv[0]):
+        return argv
+    workspace = os.path.normcase(os.path.realpath(cwd))
+    exts = _program_suffixes(argv[0], env)
+    for folder in env.get("PATH", "").split(os.pathsep):
+        if not folder or not os.path.isabs(folder):
+            continue
+        real = os.path.normcase(os.path.realpath(folder))
+        if real == workspace or real.startswith(workspace + os.sep):
+            continue
+        for ext in exts:
+            candidate = os.path.join(folder, argv[0] + ext)
+            if os.path.isfile(candidate) and (os.name == "nt" or os.access(candidate, os.X_OK)):
+                return [candidate, *argv[1:]]
+    return None
 
 
 @dataclass
@@ -199,9 +223,12 @@ class VerificationPolicy:
             return VerificationResult(passed=False, command=command, error=reason)
 
         env = _gate_environment(cwd)
+        argv = _resolve_program(shlex.split(command), env, cwd)
+        if argv is None:
+            return VerificationResult(passed=False, command=command, error="verification tool not found")
         try:
             completed = subprocess.run(
-                _resolve_program(shlex.split(command), env),
+                argv,
                 cwd=cwd,
                 env=env,
                 capture_output=True,
