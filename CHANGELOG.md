@@ -18,6 +18,16 @@ come from version control.
 
 ---
 
+## 3.3.1 — Gates run like the user's shell (2026-10-15)
+
+### Fixed
+- **Gate program lookup on Windows**: a bare gate command such as `python -m pytest` now resolves on the gate's
+  `PATH` like a shell would. Windows used to look in the engine's own folder first, so `python` ran the engine's base
+  interpreter (without the project's packages) and a passing suite reported as failing.
+- **src-layout projects test their own code**: when the workspace has `src/` beside `pyproject.toml`, `setup.py` or
+  `setup.cfg`, gates run with that `src/` first on `PYTHONPATH`. Attempt worktrees used to import the package from an
+  editable install that pointed at the main checkout, so proof-of-test could grade the wrong code.
+
 ## 3.3.0 — Codex and Antigravity CLI backends, QA/DevOps floors (2026-10-13)
 
 ### Added

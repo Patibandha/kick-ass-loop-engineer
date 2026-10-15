@@ -524,7 +524,8 @@ Full detail in [CHANGELOG.md](CHANGELOG.md). The short story:
 
 | Version | Milestone | What it added |
 |---|---|---|
-| **3.3.0** | Codex and Antigravity CLI builders _(current)_ | `codex_cli` and `agy_cli` subscription backends with kill-tree timeouts, a `gpt` family for the cross-model guard, and `qa`/`devops` floors the decision model cannot lower. |
+| **3.3.1** | Gates run like the user's shell _(current)_ | Gate programs resolve on PATH (a bare `python` is the project venv, not the engine's base interpreter on Windows); src-layout Python projects test their own `src/`. |
+| **3.3.0** | Codex and Antigravity CLI builders | `codex_cli` and `agy_cli` subscription backends with kill-tree timeouts, a `gpt` family for the cross-model guard, and `qa`/`devops` floors the decision model cannot lower. |
 | **3.2.1** | Isolated reviewers, safer keys | `decision.api_key_keyring` reads the Jev key from the OS credential store at call time. Jev failures carry the provider's own error text. `reviewer.allow_same_family` is an opt-in, journaled waiver so Claude can review Claude, paired with isolated reviewers (`isolated`, `profile_dir`) whose context stays apart from the builders'. Installable as a Claude Code plugin. |
 | **3.2.0** | Jev staffing controller | A decision model sizes each run above deterministic quality floors: risk tier, security depth L1–L4, QA/DevOps on/off, review depth, tests, architect, attempts and model tier per slice, and stall recovery. Adds a cheap→strong tier cascade, human sign-off for chosen domains, a decision journal replayed on resume, and TypeSafe or Cloudflare (zero-retention) routes. |
 | `3.1.x` | Agentic builders | In-place `claude_code`/`gemini` builders, transient retry, `escalation.allow_tokens`, un-commit before harvest, additive proof-of-test, gate `expect`/`min_count`, blocking review severities. |
