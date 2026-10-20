@@ -133,6 +133,12 @@ guardrails:
 #                              # on = always architect, even single-slice; off = never.
 #                              # CLI --architect / --no-architect override this value.
 
+# decompose: auto              # role-slice decomposition: auto | off.
+#                              # auto (default) = the builder splits the objective
+#                              # into 1-5 slices, each gated on its own; off = build
+#                              # the whole objective as one slice (no decompose call),
+#                              # for gates that only pass on the finished change.
+
 # mode: auto                   # task mode: auto | build | enhance | fix | audit.
 #                              # auto (default) detects: git-tracked files in the
 #                              # workspace -> enhance (repo map + relevant existing
@@ -552,6 +558,29 @@ def architect_mode(config: dict[str, Any]) -> str:
     return mode
 
 
+_DECOMPOSE_MODES = ("auto", "off")
+
+
+def decompose_mode(config: dict[str, Any]) -> str:
+    """Return the validated decomposition mode from config.
+
+    Args:
+        config: Parsed config with an optional top-level ``decompose`` key.
+
+    Returns:
+        ``"auto"`` (the default) or ``"off"``; YAML's bare ``off`` (False) is ``"off"``.
+
+    Raises:
+        RuntimeError: When the configured value is neither mode.
+    """
+    raw = config.get("decompose", "auto")
+    mode = "off" if raw is False else str(raw)
+    if mode not in _DECOMPOSE_MODES:
+        raise RuntimeError(
+            f"decompose must be one of {', '.join(_DECOMPOSE_MODES)} (got {mode!r})")
+    return mode
+
+
 def task_mode(config: dict[str, Any]) -> str:
     """Return the validated task mode from config.
 
@@ -966,6 +995,7 @@ def build_orchestrator(config: dict[str, Any], *, workspace: str, month: str,
         pricing=pricing_table,
         format_retries=format_retries,
         architect_mode=architect_mode(config),
+        decompose_mode=decompose_mode(config),
         visual_cfg=visual_cfg,
         visual_provider=visual_provider,
         mode=task_mode(config),

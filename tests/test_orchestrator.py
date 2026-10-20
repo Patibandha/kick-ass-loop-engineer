@@ -131,7 +131,7 @@ def _make(tmp_path, *, builder, reviewer, notifier=None, ledger=None,
           pricing=None, architect_mode="off", diagram_validator=_VALID_DIAGRAMS,
           policy=None, visual_cfg=None, visual_provider=None, mode="build",
           attempt_specs=None, builder_factory=None, escalation_allow_tokens=(),
-          decision_settings=None, decision_chain=None):
+          decision_settings=None, decision_chain=None, decompose_mode="auto"):
     workspace = workspace or _ws(tmp_path)
     memory = memory or Memory(str(tmp_path / "mem.db"))
     cursor = cursor or PipelineCursor(workspace)
@@ -152,6 +152,7 @@ def _make(tmp_path, *, builder, reviewer, notifier=None, ledger=None,
         escalation_allow_tokens=escalation_allow_tokens,
         attempt_specs=attempt_specs, builder_factory=builder_factory,
         decision_settings=decision_settings, decision_chain=decision_chain,
+        decompose_mode=decompose_mode,
     )
     return orch
 
@@ -776,6 +777,21 @@ def test_architect_off_never_runs_even_multi_slice(tmp_path, monkeypatch):
     assert outcome.state is TerminalState.SUCCESS
     assert _architect_calls(builder.provider) == []
     assert not os.path.exists(os.path.join(workspace, "design.md"))
+
+
+def test_decompose_off_builds_the_whole_objective_as_one_slice(tmp_path, monkeypatch):
+    monkeypatch.setattr(orchestrator, "run_gates", _pass_gates)
+    builder = Builder(FakeProvider([FILE_BLOCK]))
+    orch = _make(
+        tmp_path, builder=builder,
+        reviewer=Reviewer(FakeProvider(["NO FINDINGS"])),
+        architect_mode="auto", decompose_mode="off",
+    )
+    outcome = orch.run()
+
+    assert outcome.state is TerminalState.SUCCESS
+    assert _decompose_prompts(builder.provider) == []
+    assert len(orch.worktrees.promoted) == 1
 
 
 def test_architect_on_runs_for_single_slice(tmp_path, monkeypatch):
