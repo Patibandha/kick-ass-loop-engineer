@@ -59,7 +59,9 @@ DEFAULT_VERIFY_PREFIXES = (
 SCRUBBED_ENV_KEYS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "TYPESAFE_API_KEY",
                      "CLOUDFLARE_API_TOKEN")
 
-_SHELL_METACHARACTERS = (";", "|", "&", "`", "$", ">", "<", "\n", "\r", "(", ")", "{", "}")
+#: ``^`` and ``%`` are cmd.exe syntax (escape, variable expansion): Windows runs a ``.cmd``/``.bat`` shim
+#: such as ``npm.cmd`` through cmd.exe even without ``shell=True``, so they must never reach one.
+_SHELL_METACHARACTERS = (";", "|", "&", "`", "$", ">", "<", "\n", "\r", "(", ")", "{", "}", "^", "%")
 
 
 @dataclass

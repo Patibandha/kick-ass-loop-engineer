@@ -29,4 +29,7 @@ Issues = "https://github.com/Patibandha/kick-ass-loop-engineer/issues"
 packages = ["src/kickass_loop_engineer"]
 
 [tool.pytest.ini_options]
-markers = ["slow: long-running integration tests"]
+markers = [
+    "slow: long-running integration tests",
+    "guardrail_gate: gate fail-open and allowlist-matching tests",
+]
