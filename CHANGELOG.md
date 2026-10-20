@@ -18,6 +18,13 @@ come from version control.
 
 ---
 
+## Unreleased
+
+### Added
+- **`decompose: off`**: builds the whole objective as one slice, with no decompose call. Every slice is gated by the
+  run's gates, so a gate that only passes on the finished change (a marker-scoped suite, a whole-suite fix) used to
+  stall on the first partial slice.
+
 ## 3.3.1 — Gates run like the user's shell (2026-10-15)
 
 ### Fixed

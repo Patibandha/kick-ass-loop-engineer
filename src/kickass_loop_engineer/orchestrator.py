@@ -29,7 +29,7 @@ from .decision.broker import DecisionBroker
 from .decision.controller import StaffingController
 from .decision.log import DecisionLog
 from .decision.staffing import TESTS_CONSTRAINT
-from .decompose import generate_slices
+from .decompose import RoleSlice, generate_slices
 from .ensemble import default_specs, run_ensemble, select_winner
 from .escalation import should_escalate
 from .gates import GateSpec
@@ -132,6 +132,7 @@ class Orchestrator:
                  autonomy_requested=AutonomyLevel.L3, oscillation_window: int = 2,
                  policy=None, pricing=None, format_retries: int = 1,
                  architect_mode: str = "auto", diagram_validator=None,
+                 decompose_mode: str = "auto",
                  visual_cfg=None, visual_provider=None,
                  mode: str = "auto",
                  escalation_max_files: int = 10,
@@ -180,6 +181,8 @@ class Orchestrator:
             diagram_validator: Mermaid validation runner threaded to
                 ``architect.generate_design`` (``None`` selects the real
                 maid-backed default; tests inject a fake).
+            decompose_mode: ``"auto"`` (the builder splits the objective into
+                role slices) or ``"off"`` (one slice, no decompose call).
             visual_cfg: Optional mapping with ``screenshot_cmd`` — the
                 allowlisted command whose LAST whitespace token names the
                 screenshot it writes. Together with ``visual_provider`` this
@@ -254,6 +257,7 @@ class Orchestrator:
         self.pricing = pricing
         self.format_retries = format_retries
         self.architect_mode = architect_mode
+        self.decompose_mode = decompose_mode
         self.diagram_validator = diagram_validator
         self.visual_cfg = visual_cfg
         self.visual_provider = visual_provider
@@ -579,7 +583,14 @@ class Orchestrator:
             return False
 
     def _decompose(self, design_md: str) -> list:
-        """Run the ledgered decompose call (against *design_md* when non-empty)."""
+        """Run the ledgered decompose call (against *design_md* when non-empty).
+
+        With ``decompose_mode == "off"`` there is no call: the whole objective is one slice.
+        """
+        if self.decompose_mode == "off":
+            slices = [RoleSlice(role="build", objective=self.objective.goal)]
+            self.cursor.set_stage("decompose", "done", {"slices": ["build"]})
+            return slices
         slices = generate_slices(
             self.objective, self.builder, design_md=design_md,
             on_usage=lambda r: self._record_cost("decompose", r))

@@ -90,6 +90,12 @@ guardrails:
 #                              # on = always architect, even single-slice; off = never.
 #                              # CLI --architect / --no-architect override this value.
 
+# decompose: auto              # role-slice decomposition: auto | off.
+#                              # auto (default) = the builder splits the objective
+#                              # into 1-5 slices, each gated on its own; off = build
+#                              # the whole objective as one slice (no decompose call),
+#                              # for gates that only pass on the finished change.
+
 # mode: auto                   # task mode: auto | build | enhance | fix | audit.
 #                              # auto (default) detects: git-tracked files in the
 #                              # workspace -> enhance (repo map + relevant existing
