@@ -17,6 +17,7 @@ import pytest
 
 from kickass_loop_engineer.agents import Builder, Reviewer
 from kickass_loop_engineer.cursor import PipelineCursor
+from kickass_loop_engineer.gates import DEFAULT_GATE_CMD
 from kickass_loop_engineer.ledger import CostLedger
 from kickass_loop_engineer.memory import Memory
 from kickass_loop_engineer.notify import Notifier
@@ -66,14 +67,14 @@ def test_full_pipeline_on_toy_repo(tmp_path):
         "kimi-k2.7-code:cloud", "qwen2.5", Reviewer(FakeProvider(["NO FINDINGS"]))
     )
     orch = Orchestrator(
-        objective=Objective(goal="implement double()", done_when="python3 -m pytest -q passes"),
+        objective=Objective(goal="implement double()", done_when=f"{DEFAULT_GATE_CMD} passes"),
         workspace=ws, builder=builder, reviewer=reviewer,
         worktrees=WorktreeManager(ws, base_dir=str(tmp_path / "wts")),
         ledger=CostLedger(path=str(tmp_path / "ledger.json"), month="2026-07"),
         notifier=Notifier(), memory=Memory(str(tmp_path / "mem.db")),
         playbook=Playbook(str(tmp_path / "playbook.json")),
         cursor=PipelineCursor(ws),
-        gates=[GateSpec(name="unit", command="python3 -m pytest -q", prove=True)],
+        gates=[GateSpec(name="unit", command=DEFAULT_GATE_CMD, prove=True)],
         ensemble_n=2, run_id="e2e-1",
     )
     outcome = orch.run()
@@ -155,7 +156,7 @@ def test_full_pipeline_via_openai_compat_stubs(tmp_path):
         orch = build_orchestrator(
             cfg, workspace=ws, month="2026-07",
             objective=Objective(goal="implement double()",
-                                done_when="python3 -m pytest -q passes"),
+                                done_when=f"{DEFAULT_GATE_CMD} passes"),
             run_id="e2e-openai-compat")
         outcome = orch.run()
     finally:
@@ -225,7 +226,7 @@ def test_full_pipeline_with_an_agentic_in_place_builder(tmp_path):
          ".env": "OPENAI_API_KEY=leaked\n"})
     orch = Orchestrator(
         objective=Objective(goal="implement double()",
-                            done_when="python3 -m pytest -q passes"),
+                            done_when=f"{DEFAULT_GATE_CMD} passes"),
         workspace=ws, builder=Builder(provider),
         reviewer=CrossModelReviewer(
             "claude-opus-4-8", "qwen2.5", Reviewer(FakeProvider(["NO FINDINGS"]))),
@@ -234,7 +235,7 @@ def test_full_pipeline_with_an_agentic_in_place_builder(tmp_path):
         notifier=Notifier(), memory=Memory(str(tmp_path / "mem.db")),
         playbook=Playbook(str(tmp_path / "playbook.json")),
         cursor=PipelineCursor(ws),
-        gates=[GateSpec(name="unit", command="python3 -m pytest -q", prove=True)],
+        gates=[GateSpec(name="unit", command=DEFAULT_GATE_CMD, prove=True)],
         ensemble_n=1, run_id="e2e-agentic",
     )
     outcome = orch.run()

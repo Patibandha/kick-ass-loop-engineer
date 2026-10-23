@@ -15,6 +15,7 @@ import pytest
 from kickass_loop_engineer import orchestrator
 from kickass_loop_engineer.agents import Builder, Reviewer
 from kickass_loop_engineer.ensemble import AttemptSpec, default_specs
+from kickass_loop_engineer.gates import DEFAULT_GATE_CMD
 from kickass_loop_engineer.ledger import CostLedger
 from kickass_loop_engineer.memory import Memory
 from kickass_loop_engineer.objective import Objective
@@ -1830,10 +1831,10 @@ def _fix_orch(tmp_path, workspace, responses):
         tmp_path, builder=builder,
         reviewer=Reviewer(FakeProvider(["NO FINDINGS"])),
         objective=Objective(goal=FIX_GOAL,
-                            done_when="python3 -m pytest -q passes"),
+                            done_when=f"{DEFAULT_GATE_CMD} passes"),
         workspace=workspace, cursor=PipelineCursor(workspace),
         worktrees=WorktreeManager(workspace, base_dir=str(tmp_path / "wts")),
-        gates=[GateSpec(name="unit", command="python3 -m pytest -q",
+        gates=[GateSpec(name="unit", command=DEFAULT_GATE_CMD,
                         prove=False)],
         mode="fix",
     )

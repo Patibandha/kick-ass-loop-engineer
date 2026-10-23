@@ -17,6 +17,16 @@ def _repo():
     return r
 
 
+def _same_path(path):
+    """Compare paths the way the OS does: on Windows git prints forward slashes where Python has backslashes."""
+    return os.path.normcase(os.path.normpath(path))
+
+
+def _listed_worktrees(repo):
+    out = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=repo, capture_output=True, text=True)
+    return {_same_path(line[len("worktree "):]) for line in out.stdout.splitlines() if line.startswith("worktree ")}
+
+
 class WorktreeTests(unittest.TestCase):
     def test_create_makes_isolated_dir_then_remove(self):
         repo = _repo()
@@ -24,11 +34,9 @@ class WorktreeTests(unittest.TestCase):
         path = mgr.create("frontend")
         self.assertTrue(os.path.isdir(path))
         self.assertTrue(os.path.exists(os.path.join(path, "seed.txt")))
-        out = subprocess.run(["git","worktree","list"], cwd=repo, capture_output=True, text=True)
-        self.assertIn(path, out.stdout)
+        self.assertIn(_same_path(path), _listed_worktrees(repo))
         mgr.remove(path)
-        out = subprocess.run(["git","worktree","list"], cwd=repo, capture_output=True, text=True)
-        self.assertNotIn(path, out.stdout)
+        self.assertNotIn(_same_path(path), _listed_worktrees(repo))
 
     def test_context_manager_cleans_up(self):
         repo = _repo()

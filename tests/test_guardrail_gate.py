@@ -324,7 +324,7 @@ def test_an_extra_prefix_is_matched_as_exactly_as_the_bundled_ones(spy, workspac
 
 
 @pytest.mark.parametrize("meta", ["&", "&&", ";", "|", "||", "`", "$", ">", "<", ">>", "(", ")", "{", "}",
-                                  "$(calc)", "`calc`"])
+                                  "$(calc)", "`calc`", "^", "%", "%COMSPEC%", "%%a"])
 def test_shell_metacharacters_are_rejected_wherever_they_sit(meta, spy, workspace, bin_dir):
     _install(bin_dir, "pytest")
     for command in (f"pytest -q {meta} calc", f"pytest -q x{meta}y", f"pytest -q{meta}"):
@@ -373,28 +373,21 @@ CMD_EXE_SYNTAX = [
 @pytest.mark.parametrize("program,command", CMD_EXE_SYNTAX, ids=[c for _, c in CMD_EXE_SYNTAX])
 def test_cmd_exe_syntax_never_reaches_a_shell(program, command, spy, workspace, bin_dir):
     """``^`` and ``%VAR%`` are only meaningful to cmd.exe, which Windows puts in front of ``.cmd`` shims
-    (``npm`` is one). Either the command is rejected, or it provably does not go through a shell."""
+    (``npm`` is one). They are rejected on every host, so a Linux run catches their removal too."""
     _install(bin_dir, program, ext=".cmd")
     result = VerificationPolicy().run(command, workspace)
-    for argv, kwargs in spy.calls:
-        assert not _reaches_cmd_exe(argv, kwargs), f"{command!r} would be parsed by cmd.exe: {argv!r}"
-    if not spy.calls:
-        assert result.passed is False and result.error
+    assert result.passed is False and result.error == METACHARACTERS
+    assert spy.calls == []
 
 
 @pytest.mark.parametrize("command", ["pytest -q ^x", "pytest -q %COMSPEC%", "pytest -q %PATH%"])
-def test_cmd_exe_syntax_is_inert_for_an_exe_gate_program(command, spy, workspace, bin_dir):
-    """A real ``.exe`` takes ``^`` and ``%`` as plain argument text, so passing them on is fine only
-    because no shell is involved."""
+def test_cmd_exe_syntax_is_rejected_even_for_an_exe_gate_program(command, spy, workspace, bin_dir):
+    """The gate cannot know whether a program is a ``.cmd`` shim on some other host, so ``^`` and ``%`` are
+    refused for every program, not only for shims."""
     _install(bin_dir, "pytest")
     result = VerificationPolicy().run(command, workspace)
-    if spy.calls:
-        argv, kwargs = spy.calls[0]
-        assert not _reaches_cmd_exe(argv, kwargs)
-        assert argv[1:] == command.split()[1:]
-        assert result.passed
-    else:
-        assert result.passed is False
+    assert result.passed is False and result.error == METACHARACTERS
+    assert spy.calls == []
 
 
 def test_a_gate_never_runs_with_shell_true(spy, workspace, bin_dir):

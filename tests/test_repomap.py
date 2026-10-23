@@ -26,7 +26,7 @@ def _make_repo(tmp_path, files):
         if isinstance(content, bytes):
             path.write_bytes(content)
         else:
-            path.write_text(content)
+            path.write_text(content, newline="")
     _git(repo, "add", "-A")
     _git(repo, "-c", "user.email=t@t", "-c", "user.name=t",
          "commit", "-qm", "init")
