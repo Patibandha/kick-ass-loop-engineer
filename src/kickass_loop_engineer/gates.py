@@ -15,6 +15,7 @@ def default_python(os_name: str = os.name) -> str:
     """The interpreter name the engine's own gate commands use on this host.
 
     Windows has no real ``python3``: the name is the Microsoft Store stub, which never runs a suite.
+    ``DEFAULT_GATE_CMD`` is computed once at import, so patching ``os.name`` later does not change it.
     """
     return "python" if os_name == "nt" else "python3"
 

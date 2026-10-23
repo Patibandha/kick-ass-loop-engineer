@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 
+from .gates import DEFAULT_GATE_CMD
 from .guardrails import DEFAULT_VERIFY_PREFIXES
 
 SLOTS: tuple[str, ...] = (
@@ -37,7 +38,7 @@ QUESTION_TEMPLATES: dict = {
     },
     "success_metrics": {
         "question": ("Name 1-3 measurable success metrics. Each needs a runnable "
-                     "check or a number, e.g. 'python3 -m pytest -q passes', "
+                     f"check or a number, e.g. '{DEFAULT_GATE_CMD} passes', "
                      "'p95 < 200ms', 'handles 10000 rows in < 5 s'."),
         "hint": "These become the loop's verifier targets.",
     },
@@ -86,7 +87,7 @@ def lint_done_when(done_when: str) -> tuple[bool, str]:
             return True, ""
     return False, (
         "done_when is not measurable — include a runnable command "
-        "(e.g. 'python3 -m pytest -q passes') or a numeric threshold "
+        f"(e.g. '{DEFAULT_GATE_CMD} passes') or a numeric threshold "
         "(e.g. 'p95 < 200ms')"
     )
 
@@ -122,7 +123,7 @@ def next_questions(spec) -> list:
         questions.append({
             "slot": "done_when",
             "question": (f"'{current}' is not checkable. Restate it as a runnable "
-                         "command (e.g. 'python3 -m pytest -q passes') or a numeric "
+                         f"command (e.g. '{DEFAULT_GATE_CMD} passes') or a numeric "
                          "threshold (e.g. 'p95 < 200ms')."),
             "hint": "The loop cannot converge on a wish.",
         })

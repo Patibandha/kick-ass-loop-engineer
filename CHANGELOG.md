@@ -18,9 +18,13 @@ come from version control.
 
 ---
 
-## Unreleased
+## 3.4.0 — Windows default gate, one-slice builds, ^ and % rejected (2026-10-22)
 
 ### Fixed
+- **`^` and `%` are shell metacharacters**: cmd.exe treats them as escape and variable expansion, and Windows runs
+  a `.cmd`/`.bat` gate shim through cmd.exe, so the gate allowlist now rejects both.
+- **`init --ui` and the interview** suggest the host's default gate (`python -m pytest -q` on Windows) instead of
+  `python3 -m pytest -q`.
 - **Default gate and reproduce check on Windows**: both were spelled `python3 -m pytest`, and on Windows `python3` is
   the Microsoft Store stub, so an unconfigured gate or a fix-mode reproduce check could never pass. They now use
   `python` on Windows and `python3` elsewhere (`gates.default_python`).
