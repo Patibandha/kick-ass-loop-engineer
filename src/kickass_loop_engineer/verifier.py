@@ -24,10 +24,12 @@ from a model's transcript:
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from dataclasses import dataclass, field, replace
 from typing import Optional
 
+from .archmap import ARCHMAP_RELPATH
 from .gates import GATES
 from .guardrails import VerificationPolicy
 
@@ -88,6 +90,15 @@ def _git(workspace: str, *args: str, timeout: float = 60.0) -> subprocess.Comple
     """Run a git subcommand in the workspace, raising on failure or timeout."""
     return subprocess.run(["git", *args], cwd=workspace, capture_output=True,
                           text=True, check=True, timeout=timeout)
+
+
+def _is_engine_generated(path: str) -> bool:
+    """Say whether git reports *path* as a file the engine itself regenerates (the architecture map).
+
+    The engine rewrites it at every promote and no gate reads it, so reverting it can never turn a gate red:
+    counting it as a source change would make every tests-only change "not proven".
+    """
+    return path.replace("\\", "/") == ARCHMAP_RELPATH.replace(os.sep, "/")
 
 
 def _is_test_path(path: str) -> bool:
@@ -289,7 +300,7 @@ def prove(gate_cmd: str, workspace: str, policy: Optional[VerificationPolicy] = 
             return record
         # dict.fromkeys: de-duplicate while keeping git's order for the message.
         non_test = list(dict.fromkeys(changed for _code, changed in entries
-                                      if not _is_test_path(changed)))
+                                      if not _is_test_path(changed) and not _is_engine_generated(changed)))
         if not non_test:
             changed_tests = sorted({changed for _code, changed in entries})
             record.skipped_reason = (

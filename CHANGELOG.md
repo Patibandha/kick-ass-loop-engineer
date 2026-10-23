@@ -21,6 +21,9 @@ come from version control.
 ## 3.4.0 — Windows default gate, one-slice builds, ^ and % rejected (2026-10-22)
 
 ### Fixed
+- **A tests-only change can pass proof-of-test**: the engine regenerates `docs/architecture.mermaid.md` at every
+  promote, and proof counted it as a source change, so a run adding only tests ended "not proven" and blocked. The
+  map is no longer reverted; a real source change beside it must still be proven.
 - **Workspace isolation on Windows**: a write is checked against the workspace after resolving links, so a
   junction or symlink inside the workspace can no longer carry it outside; backslash paths are judged the same on
   every host; drive letters and alternate data streams (`:`) are refused.
