@@ -58,6 +58,9 @@ DEFAULT_VERIFY_PREFIXES = (
 #: model keys stay with the engine process that owns them.
 SCRUBBED_ENV_KEYS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "TYPESAFE_API_KEY",
                      "CLOUDFLARE_API_TOKEN")
+#: Any other credential-named variable (``OPENAI_API_KEY``, ``GITHUB_TOKEN``, ``DB_PASSWORD``…) is scrubbed too:
+#: a gate's output is journaled, so whatever reaches the gate can reach a log.
+_CREDENTIAL_NAME = re.compile(r"(?i)(API_?KEY|TOKEN|SECRET|PASSWORD)$")
 
 #: ``^`` and ``%`` are cmd.exe syntax (escape, variable expansion): Windows runs a ``.cmd``/``.bat`` shim
 #: such as ``npm.cmd`` through cmd.exe even without ``shell=True``, so they must never reach one.
@@ -134,7 +137,7 @@ def _gate_environment(cwd: str) -> dict:
     A src-layout Python project gets ``<cwd>/src`` first on ``PYTHONPATH`` so the gate tests the
     code in THIS workspace (an attempt worktree), not an editable install that points elsewhere.
     """
-    env = {k: v for k, v in os.environ.items() if k not in SCRUBBED_ENV_KEYS}
+    env = {k: v for k, v in os.environ.items() if k not in SCRUBBED_ENV_KEYS and not _CREDENTIAL_NAME.search(k)}
     src = os.path.join(cwd, "src")
     if os.path.isdir(src) and any(os.path.isfile(os.path.join(cwd, name)) for name in _PYTHON_PROJECT_FILES):
         env["PYTHONPATH"] = os.pathsep.join(p for p in (src, env.get("PYTHONPATH", "")) if p)

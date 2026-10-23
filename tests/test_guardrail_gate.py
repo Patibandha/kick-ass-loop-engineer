@@ -84,13 +84,6 @@ def _install(folder, name, ext=".exe"):
     return path
 
 
-def _reaches_cmd_exe(argv, kwargs):
-    """True when the call would be parsed by a shell: ``shell=True``, a string command, or a batch shim."""
-    if kwargs.get("shell") or isinstance(argv, str):
-        return True
-    return os.name == "nt" and str(argv[0]).lower().endswith((".cmd", ".bat"))
-
-
 # --------------------------------------------------------------------------- default gate string
 
 

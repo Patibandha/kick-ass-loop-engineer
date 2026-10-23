@@ -23,9 +23,15 @@ come from version control.
 ### Fixed
 - **A stalled run says why**: the outcome's evidence and each failing `gate_result` journal event now carry the
   gate's output tail. A stall used to report only "no attempt passed its gate" after removing the attempts' worktrees.
+- **Gate output and environment carry no credentials**: secret-shaped text in journaled gate output is replaced
+  with `[REDACTED]` (`decision.redact.redact_text`), and any variable named `*API_KEY`, `*TOKEN`, `*SECRET` or
+  `*PASSWORD` is scrubbed from a gate's environment, not only the four named model keys. A gate that needs such a
+  variable must now get it another way.
 - **The test suite passes on Windows** (was 25 failures): fixtures are written byte-exact, path checks compare
   the way the OS does, tests use the host's default gate, and `tests/conftest.py` puts the running interpreter's
-  folder first on PATH. New `tests/test_autocrlf.py` proves a change in `core.autocrlf` true and false repos.
+  folder first on PATH. New `tests/test_autocrlf.py` proves a change under `core.autocrlf`
+  true, false and input; the change comes back as git would check it out (converted endings when they do not
+  match the setting).
 - **`^` and `%` are shell metacharacters**: cmd.exe treats them as escape and variable expansion, and Windows runs
   a `.cmd`/`.bat` gate shim through cmd.exe, so the gate allowlist now rejects both.
 - **`init --ui` and the interview** suggest the host's default gate (`python -m pytest -q` on Windows) instead of

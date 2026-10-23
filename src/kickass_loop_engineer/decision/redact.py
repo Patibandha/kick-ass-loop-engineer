@@ -37,6 +37,16 @@ _SECRET_PATTERNS = (
 )
 
 
+def redact_text(text: str) -> str:
+    """Return *text* with every secret-shaped substring replaced by ``[REDACTED]``.
+
+    For text the engine keeps (gate output in the journal), where failing closed would hide why a gate failed.
+    """
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub("[REDACTED]", text)
+    return text
+
+
 def build_state(facts: dict) -> dict:
     """Return the allowlisted, truncated, secret-checked form of *facts*.
 
