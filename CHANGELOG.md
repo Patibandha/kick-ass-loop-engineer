@@ -21,6 +21,8 @@ come from version control.
 ## 3.4.0 — Windows default gate, one-slice builds, ^ and % rejected (2026-10-22)
 
 ### Fixed
+- **A stalled run says why**: the outcome's evidence and each failing `gate_result` journal event now carry the
+  gate's output tail. A stall used to report only "no attempt passed its gate" after removing the attempts' worktrees.
 - **The test suite passes on Windows** (was 25 failures): fixtures are written byte-exact, path checks compare
   the way the OS does, tests use the host's default gate, and `tests/conftest.py` puts the running interpreter's
   folder first on PATH. New `tests/test_autocrlf.py` proves a change in `core.autocrlf` true and false repos.

@@ -201,6 +201,24 @@ def test_terminal_cursor_detail_contains_outcome(tmp_path, monkeypatch):
     assert persisted["detail"]["outcome"]["evidence"], "evidence rides in the cursor"
 
 
+def test_a_stall_keeps_each_failed_gates_evidence(tmp_path, monkeypatch):
+    # Without it a stalled run says only "no attempt passed its gate", and the attempts' worktrees are gone.
+    monkeypatch.setattr(orchestrator, "run_gates", _fail_gates)
+    orch = _make(
+        tmp_path,
+        builder=Builder(FakeProvider(["not json", FILE_BLOCK, FILE_BLOCK])),
+        reviewer=Reviewer(FakeProvider(["NO FINDINGS"])),
+        ensemble_n=2,
+    )
+    outcome = orch.run()
+
+    assert outcome.state is TerminalState.STALLED
+    assert [e["evidence"] for e in outcome.evidence] == ["fail", "fail"]
+    with open(os.path.join(orch.workspace, ".loop-engineer", "events.jsonl"), encoding="utf-8") as fh:
+        gate_events = [json.loads(line)["payload"] for line in fh if '"gate_result"' in line]
+    assert [e["evidence"] for e in gate_events] == ["fail", "fail"]
+
+
 def test_no_passing_attempt_is_stalled(tmp_path, monkeypatch):
     monkeypatch.setattr(orchestrator, "run_gates", _fail_gates)
     orch = _make(
@@ -1328,7 +1346,7 @@ def test_no_observations_leaves_briefs_and_stall_unchanged(tmp_path, monkeypatch
     outcome = orch.run()
 
     assert outcome.state is TerminalState.STALLED
-    assert outcome.evidence == []
+    assert all("observed" not in e for e in outcome.evidence)
     prompts = [user for (_system, user) in builder.provider.calls]
     assert all("OBSERVED" not in p for p in prompts)
     assert orch._feedback == ""
