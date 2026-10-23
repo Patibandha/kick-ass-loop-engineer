@@ -24,6 +24,7 @@ import re
 
 from .agents import Review, Reviewer
 from .objective import Objective
+from .workspace import write_text_unlinked
 
 logger = logging.getLogger("kickass_loop_engineer.review")
 
@@ -330,8 +331,7 @@ def write_slice_review(workspace: str, slice_role: str, findings, *, reviewer: s
         os.makedirs(directory, exist_ok=True)
         safe = re.sub(r"[^A-Za-z0-9._-]", "_", slice_role) or "slice"
         path = os.path.join(directory, f"{safe}.json")
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump(record, handle, indent=1)
+        write_text_unlinked(path, json.dumps(record, indent=1))
         return path
     except (OSError, ValueError, TypeError) as exc:
         logger.warning("could not file the review for slice %r: %s", slice_role, exc)

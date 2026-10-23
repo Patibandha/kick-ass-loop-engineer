@@ -47,7 +47,7 @@ from .session import BuildSession
 from .terminal import RunOutcome, TerminalState
 from .verifier import OBSERVER_CAP, EvidenceRecord, GatesResult, run_gates
 from .visual import visual_critique
-from .workspace import Workspace
+from .workspace import Workspace, write_text_unlinked
 from .worktree import WorktreeError
 
 logger = logging.getLogger("kickass_loop_engineer.orchestrator")
@@ -666,8 +666,7 @@ class Orchestrator:
         self._record_cost("architect", result)
         path = os.path.join(self.workspace, "design.md")
         try:
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(design.markdown)
+            write_text_unlinked(path, design.markdown)
         except OSError as exc:
             # Degraded, not fatal: the in-memory design still drives the
             # re-decompose and the conformance gate; a later resume simply
@@ -719,8 +718,7 @@ class Orchestrator:
                 "usable layers or forbidden imports")
             return
         path = os.path.join(self.workspace, ".importlinter")
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(ini)
+        write_text_unlinked(path, ini)
         self._importlinter_ini = ini
         self.gates.append(GateSpec(name="architecture", command="lint-imports",
                                    prove=False))
@@ -752,8 +750,7 @@ class Orchestrator:
             "promoted .importlinter differed from the engine-rendered "
             "conformance contract (builder tampering?); restoring %s", path)
         try:
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(self._importlinter_ini)
+            write_text_unlinked(path, self._importlinter_ini)
         except OSError as exc:
             logger.error("could not restore %s: %s", path, exc)
 

@@ -45,6 +45,32 @@ _GIT_TIMEOUT_SECONDS = 60
 _HASH_CHUNK_BYTES = 65536
 
 
+
+def contained(root: str, target: str) -> bool:
+    """Return True when *target* really lands inside *root*.
+
+    Both sides are resolved through links first, so a junction or symlink inside *root* that points
+    elsewhere cannot carry a write out; a different drive counts as outside.
+    """
+    try:
+        real_root = os.path.realpath(root)
+        return os.path.commonpath([real_root, os.path.realpath(target)]) == real_root
+    except ValueError:
+        return False
+
+
+def write_text_unlinked(path: str, text: str) -> None:
+    """Write *text* to *path*, refusing when *path* is a link (it would overwrite the link's target).
+
+    Raises:
+        OSError: When *path* is a symlink or junction, or the write fails.
+    """
+    # os.path.isjunction is Python 3.12+; before it, junctions read as plain folders.
+    if os.path.islink(path) or getattr(os.path, "isjunction", lambda _p: False)(path):
+        raise OSError(f"refusing to write through a link: {path}")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
 class WorkspaceError(RuntimeError):
     """Raised when the workspace cannot be inspected or restored.
 
@@ -165,8 +191,14 @@ class Workspace:
                 continue
 
             target = os.path.abspath(os.path.join(self.root, item.path))
-            if not self._contained(target):
+            if not contained(self.root, target):
                 outcome.rejected.append((item.path, "resolves outside workspace"))
+                continue
+            # Judge where the write really lands too: a link or an 8.3 short name can alias ``.git``.
+            ok, reason = self.policy.check_path(
+                os.path.relpath(os.path.realpath(target), os.path.realpath(self.root)))
+            if not ok:
+                outcome.rejected.append((item.path, f"resolves to a refused path: {reason}"))
                 continue
             if os.path.exists(target) and not self.policy.allow_overwrite:
                 outcome.rejected.append((item.path, "overwrite not permitted"))
@@ -184,18 +216,6 @@ class Workspace:
             self.written.add(item.path)
             outcome.written.append(item.path)
         return outcome
-
-    def _contained(self, target: str) -> bool:
-        """Return True when *target* really lands inside the workspace.
-
-        Both sides are resolved through links first, so a junction or symlink inside the workspace
-        that points elsewhere cannot carry a write out; a different drive counts as outside.
-        """
-        try:
-            real_root = os.path.realpath(self.root)
-            return os.path.commonpath([real_root, os.path.realpath(target)]) == real_root
-        except ValueError:
-            return False
 
     def fingerprint(self) -> dict:
         """Return ``{relative path: sha256 hex}`` for every changed file.

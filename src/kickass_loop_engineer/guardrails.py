@@ -65,6 +65,10 @@ _CREDENTIAL_NAME = re.compile(r"(?i)(API_?KEY|TOKEN|SECRET|PASSWORD)$")
 
 #: ``^`` and ``%`` are cmd.exe syntax (escape, variable expansion): Windows runs a ``.cmd``/``.bat`` shim
 #: such as ``npm.cmd`` through cmd.exe even without ``shell=True``, so they must never reach one.
+#: Names Windows maps to devices in any folder and with any extension (``con.txt`` is the console).
+_WINDOWS_DEVICE_NAMES = frozenset({"CON", "PRN", "AUX", "NUL", *(f"COM{n}" for n in range(1, 10)),
+                                   *(f"LPT{n}" for n in range(1, 10))})
+
 _SHELL_METACHARACTERS = (";", "|", "&", "`", "$", ">", "<", "\n", "\r", "(", ")", "{", "}", "^", "%")
 
 
@@ -97,6 +101,11 @@ class WritePolicy:
         if normalized.startswith("..") or normalized == ".":
             return False, "path escapes the workspace"
         segments = normalized.split("/")
+        # Judged on every host: Win32 strips a trailing dot or space, so ``.git./config`` lands in ``.git``.
+        if any(segment.endswith((".", " ")) for segment in segments):
+            return False, "a path component ends in a dot or space (trailing characters Windows strips)"
+        if any(segment.split(".")[0].rstrip(" ").upper() in _WINDOWS_DEVICE_NAMES for segment in segments):
+            return False, "a path component is a reserved Windows device name"
         for pattern in self.protected_globs:
             if fnmatch.fnmatch(normalized, pattern):
                 return False, f"path matches protected pattern {pattern!r}"

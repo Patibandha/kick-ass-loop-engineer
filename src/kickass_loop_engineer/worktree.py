@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 from typing import Generator, Optional
 
+from .workspace import contained
+
 
 class WorktreeError(Exception):
     """Raised when a git worktree operation fails."""
@@ -104,7 +106,7 @@ class WorktreeManager:
             if os.path.islink(src_path) or not os.path.isfile(src_path):
                 continue
             target = os.path.abspath(os.path.join(worktree_path, rel))
-            if os.path.commonpath([worktree_path, target]) != worktree_path:
+            if not contained(worktree_path, target):
                 continue
             try:
                 os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -216,7 +218,8 @@ class WorktreeManager:
             if os.path.islink(src_path) or not os.path.isfile(src_path):
                 continue
             target = os.path.abspath(os.path.join(dest, rel))
-            if os.path.commonpath([dest, target]) != dest:
+            # Resolved through links: the user's workspace may hold a junction the worktree did not.
+            if not contained(dest, target):
                 raise WorktreeError(f"promotion path escapes workspace: {rel!r}")
             try:
                 os.makedirs(os.path.dirname(target), exist_ok=True)
