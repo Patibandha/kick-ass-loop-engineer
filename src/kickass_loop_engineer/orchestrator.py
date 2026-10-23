@@ -28,6 +28,7 @@ from .autonomy import AutonomyLevel, ReadinessChecklist, resolve_level
 from .decision.broker import DecisionBroker
 from .decision.controller import StaffingController
 from .decision.log import DecisionLog
+from .decision.redact import redact_text
 from .decision.staffing import TESTS_CONSTRAINT
 from .decompose import RoleSlice, generate_slices
 from .ensemble import default_specs, run_ensemble, select_winner
@@ -103,7 +104,7 @@ def _detect_python_package(workspace: str) -> str | None:
 
 def _failed_gate_evidence(attempts) -> list:
     """Every attempt's failing gate records, as ``{"gate", "command", "evidence"}`` dicts."""
-    return [{"gate": rec.gate, "command": rec.command, "evidence": rec.evidence}
+    return [{"gate": rec.gate, "command": rec.command, "evidence": redact_text(rec.evidence)}
             for attempt in attempts
             for rec in getattr(attempt.evidence, "records", [])
             if not rec.passed]
@@ -1087,7 +1088,7 @@ class Orchestrator:
                     self._feedback_entries.append(observed)
                     self._feedback = "\n\n".join(self._feedback_entries)
                     return RunOutcome(TerminalState.STALLED, reason,
-                                      evidence=[{"observed": observed}])
+                                      evidence=[{"observed": observed}, *_failed_gate_evidence(attempts)])
                 # The attempts' worktrees are gone: their failing gate output is all that explains the stall.
                 return RunOutcome(TerminalState.STALLED, reason, evidence=_failed_gate_evidence(attempts))
 
@@ -1252,7 +1253,7 @@ class Orchestrator:
                 "proven": proof.proven if proof is not None else None,
             }
             if not rec.passed:
-                payload["evidence"] = rec.evidence
+                payload["evidence"] = redact_text(rec.evidence)
             self.cursor.emit("gate_result", payload)
             observed = getattr(rec, "observed", "")
             if not rec.passed and observed:

@@ -1,6 +1,9 @@
-"""Proof-of-test on a target repo checked out with ``core.autocrlf`` true (CRLF working tree, as on a
-Windows user's machine) and false. The proof stashes and restores the change; it must still prove it, and
-must hand back the user's files byte for byte, whatever their line endings.
+"""Proof-of-test on a target repo under each ``core.autocrlf`` setting.
+
+The proof stashes and restores the change, and git converts line endings on the way, so the change comes
+back as git would check it out: byte for byte when its endings already match the setting (CRLF under
+``true``, anything under ``false``), and with the same text but converted endings when they do not. Either
+way the proof must still prove a real change.
 """
 
 import subprocess
@@ -15,8 +18,11 @@ def _git(repo, *args):
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
 
 
-@pytest.mark.parametrize(("autocrlf", "eol"), [("true", b"\r\n"), ("false", b"\n")])
-def test_proof_proves_a_real_change_and_restores_it_byte_for_byte(tmp_path, autocrlf, eol):
+@pytest.mark.parametrize(("autocrlf", "eol", "byte_exact"), [
+    ("true", b"\r\n", True), ("false", b"\n", True), ("false", b"\r\n", True),
+    ("true", b"\n", False), ("input", b"\r\n", False),
+])
+def test_proof_proves_a_real_change_and_restores_its_text(tmp_path, autocrlf, eol, byte_exact):
     repo = tmp_path / "target"
     repo.mkdir()
     _git(repo, "init", "-q")
@@ -34,4 +40,7 @@ def test_proof_proves_a_real_change_and_restores_it_byte_for_byte(tmp_path, auto
     record = prove(DEFAULT_GATE_CMD, str(repo))
 
     assert record.proven, record.error
-    assert (repo / "answer.py").read_bytes() == change
+    restored = (repo / "answer.py").read_bytes()
+    assert restored.replace(b"\r\n", b"\n") == change.replace(b"\r\n", b"\n")
+    if byte_exact:
+        assert restored == change

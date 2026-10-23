@@ -219,6 +219,34 @@ def test_a_stall_keeps_each_failed_gates_evidence(tmp_path, monkeypatch):
     assert [e["evidence"] for e in gate_events] == ["fail", "fail"]
 
 
+def test_secret_shaped_gate_output_is_redacted_before_it_is_kept(tmp_path, monkeypatch):
+    key = "sk-" + "a1B2c3D4e5F6g7H8i9J0"
+
+    def leaky_gates(specs, workspace, policy=None):
+        first = specs[0]
+        return GatesResult(records=[EvidenceRecord(gate=first.name, command=first.command, passed=False,
+                                                   evidence=f"exit=1; assert '{key}' == ''")])
+
+    monkeypatch.setattr(orchestrator, "run_gates", leaky_gates)
+    orch = _make(tmp_path, builder=Builder(FakeProvider(["not json", FILE_BLOCK])),
+                 reviewer=Reviewer(FakeProvider(["NO FINDINGS"])))
+    outcome = orch.run()
+
+    assert outcome.state is TerminalState.STALLED
+    with open(os.path.join(orch.workspace, ".loop-engineer", "events.jsonl"), encoding="utf-8") as fh:
+        journal = fh.read()
+    assert key not in json.dumps(outcome.evidence) and key not in journal
+    assert "[REDACTED]" in json.dumps(outcome.evidence)
+
+
+def test_an_observed_stall_still_keeps_the_failing_gate_output(tmp_path, monkeypatch):
+    orch, _builder, outcome = _stalled_with_observation(tmp_path, monkeypatch, "page snapshot")
+
+    assert outcome.state is TerminalState.STALLED
+    assert any("observed" in e for e in outcome.evidence)
+    assert any(e.get("gate") for e in outcome.evidence)
+
+
 def test_no_passing_attempt_is_stalled(tmp_path, monkeypatch):
     monkeypatch.setattr(orchestrator, "run_gates", _fail_gates)
     orch = _make(
