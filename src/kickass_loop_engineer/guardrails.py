@@ -18,6 +18,7 @@ from __future__ import annotations
 import fnmatch
 import logging
 import os
+import posixpath
 import re
 import shlex
 import subprocess
@@ -85,12 +86,17 @@ class WritePolicy:
 
     def check_path(self, rel_path: str) -> tuple[bool, str]:
         """Return ``(ok, reason)`` for a proposed workspace-relative path."""
-        if os.path.isabs(rel_path):
+        # Judged the same on every host: a backslash is a separator, so a Windows-only spelling is
+        # refused on POSIX too instead of being written as an odd filename.
+        posix = rel_path.replace("\\", "/")
+        if os.path.isabs(rel_path) or posixpath.isabs(posix):
             return False, "absolute paths are not allowed"
-        normalized = os.path.normpath(rel_path)
+        if ":" in posix:
+            return False, "drive letters and alternate data streams (':') are not allowed"
+        normalized = posixpath.normpath(posix)
         if normalized.startswith("..") or normalized == ".":
             return False, "path escapes the workspace"
-        segments = normalized.replace("\\", "/").split("/")
+        segments = normalized.split("/")
         for pattern in self.protected_globs:
             if fnmatch.fnmatch(normalized, pattern):
                 return False, f"path matches protected pattern {pattern!r}"
