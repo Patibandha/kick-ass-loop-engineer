@@ -18,6 +18,7 @@ import pytest
 
 from kickass_loop_engineer.guardrails import WritePolicy
 from kickass_loop_engineer.workspace import Workspace
+from kickass_loop_engineer.worktree import WorktreeError, WorktreeManager
 
 isolation = pytest.mark.guardrail_isolation
 
@@ -117,7 +118,8 @@ def test_apply_refuses_hostile_spelling_and_writes_nothing(layout, path):
     assert outcome.rejected[0][1]
     assert workspace.written == set()
     assert _tree(root) == []
-    assert _tree(outside) == []
+    # ``..\evil.txt`` would land beside the workspace, not in ``outside``: nothing anywhere in the scratch tree.
+    assert _tree(root.parent) == []
 
 
 @isolation
@@ -210,3 +212,81 @@ def test_write_through_a_symlink_is_refused_where_symlinks_can_be_made(layout):
     assert outcome.written == []
     assert outcome.rejected
     assert _tree(outside) == []
+
+
+@isolation
+@pytest.mark.parametrize("path", [".git./config", ".git. /config", ".ssh /known_hosts", "pkg/mod.py.", "pkg/mod.py ",
+                                  "a./b.py"])
+def test_a_segment_windows_would_strip_a_trailing_dot_or_space_from_is_refused(path):
+    """Win32 drops a trailing dot or space, so ``.git./config`` would be written to ``.git/config``."""
+    ok, reason = WritePolicy().check_path(path)
+    assert ok is False and "trailing" in reason
+
+
+@isolation
+@pytest.mark.parametrize("path", ["CON", "con.txt", "pkg/NUL", "aux.py", "COM1", "lpt9.log", "Prn"])
+def test_a_reserved_windows_device_name_is_refused(path):
+    ok, reason = WritePolicy().check_path(path)
+    assert ok is False and "device" in reason
+
+
+@isolation
+@pytest.mark.parametrize("path", ["console.py", "conftest.py", "com10.txt", "auxiliary/x.py", "nullable.py"])
+def test_a_name_that_only_starts_like_a_device_is_accepted(path):
+    ok, reason = WritePolicy().check_path(path)
+    assert ok, reason
+
+
+@isolation
+def test_a_link_inside_the_workspace_cannot_reach_a_protected_folder(layout):
+    """An alias of ``.git`` (a link here; an 8.3 short name on Windows) is judged by where it really lands."""
+    root, _outside = layout
+    (root / ".git").mkdir()
+    _make_directory_link(root / "alias", root / ".git")
+    workspace = Workspace(root=str(root))
+
+    outcome = workspace.apply(_file_block("alias/config"))
+
+    assert outcome.written == []
+    assert "protected" in outcome.rejected[0][1]
+    assert _tree(root / ".git") == []
+
+
+def _git_repo(path):
+    path.mkdir()
+    for args in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"],
+                 ["commit", "-q", "--allow-empty", "-m", "start"]):
+        subprocess.run(["git", *args], cwd=path, check=True, capture_output=True)
+    return path
+
+
+@isolation
+def test_promote_cannot_carry_a_file_out_through_a_junction_in_the_workspace(tmp_path):
+    """``apply`` checks the attempt worktree; ``promote`` copies into the user's workspace, which may hold a link."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    dest = _git_repo(tmp_path / "dest")
+    src = _git_repo(tmp_path / "src")
+    (src / "link").mkdir()
+    (src / "link" / "evil.txt").write_text("payload")
+    _make_directory_link(dest / "link", outside)
+
+    with pytest.raises(WorktreeError):
+        WorktreeManager(str(dest)).promote(str(src), str(dest))
+    assert _tree(outside) == []
+
+
+@pytest.mark.guardrail_isolation_capability
+def test_an_engine_write_to_a_fixed_name_refuses_a_link_planted_there(layout):
+    """Capability job only: a file symlink may need privilege on Windows."""
+    from kickass_loop_engineer.workspace import write_text_unlinked
+    root, outside = layout
+    (outside / "target.txt").write_text("untouched")
+    try:
+        os.symlink(str(outside / "target.txt"), str(root / "design.md"))
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"capability missing: cannot create symlinks here ({exc})")
+
+    with pytest.raises(OSError):
+        write_text_unlinked(str(root / "design.md"), "overwritten")
+    assert (outside / "target.txt").read_text() == "untouched"

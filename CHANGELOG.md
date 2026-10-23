@@ -24,6 +24,13 @@ come from version control.
 - **Workspace isolation on Windows**: a write is checked against the workspace after resolving links, so a
   junction or symlink inside the workspace can no longer carry it outside; backslash paths are judged the same on
   every host; drive letters and alternate data streams (`:`) are refused.
+- **More Windows write escapes closed**: a path component ending in a dot or space (`.git./config`, which Windows
+  writes to `.git/config`) and reserved device names (`CON`, `nul.txt`, `COM1`…) are refused on every host; a write
+  is also judged by where it really lands, so a link or 8.3 short name aliasing `.git` is refused; `promote` resolves
+  links in the user's workspace before copying; engine writes to fixed names (`design.md`, `.importlinter`,
+  `STATE.md`, review records) refuse a link planted there. A file named with `:` is now refused on POSIX too.
+- **Capability tests run only in their own job**: `addopts` deselects `guardrail_isolation_capability`; run it with
+  `python -m pytest -q -m guardrail_isolation_capability`.
 - **A stalled run says why**: the outcome's evidence and each failing `gate_result` journal event now carry the
   gate's output tail. A stall used to report only "no attempt passed its gate" after removing the attempts' worktrees.
 - **Gate output and environment carry no credentials**: secret-shaped text in journaled gate output is replaced
