@@ -9,6 +9,7 @@ import subprocess
 import pytest
 
 from kickass_loop_engineer.agents import Builder
+from kickass_loop_engineer.gates import default_python
 from kickass_loop_engineer.guardrails import VerificationPolicy
 from kickass_loop_engineer.objective import Objective
 from kickass_loop_engineer.reproduce import (
@@ -185,7 +186,7 @@ def test_repro_prompt_uses_repro_system_and_forbids_fixes(tmp_path):
 
 def test_repro_check_command_is_config_isolated_and_allowlisted():
     command = repro_check_command("tests/test_repro_x.py")
-    assert command == ("python3 -m pytest tests/test_repro_x.py -q "
+    assert command == (f"{default_python()} -m pytest tests/test_repro_x.py -q "
                        "--noconftest -o addopts=")
     ok, reason = VerificationPolicy().validate(command)
     assert ok, reason
