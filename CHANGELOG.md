@@ -21,6 +21,9 @@ come from version control.
 ## 3.4.0 — Windows default gate, one-slice builds, ^ and % rejected (2026-10-22)
 
 ### Fixed
+- **Workspace isolation on Windows**: a write is checked against the workspace after resolving links, so a
+  junction or symlink inside the workspace can no longer carry it outside; backslash paths are judged the same on
+  every host; drive letters and alternate data streams (`:`) are refused.
 - **A stalled run says why**: the outcome's evidence and each failing `gate_result` journal event now carry the
   gate's output tail. A stall used to report only "no attempt passed its gate" after removing the attempts' worktrees.
 - **Gate output and environment carry no credentials**: secret-shaped text in journaled gate output is replaced
