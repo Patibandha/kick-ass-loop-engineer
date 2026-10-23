@@ -187,6 +187,25 @@ class AdditiveProofTests(unittest.TestCase):
         self.assertEqual(record.error, "")
         self.assertEqual(_stash_entries(repo), "")
 
+    def test_the_engines_own_architecture_map_does_not_count_as_a_source_change(self):
+        # The engine regenerates docs/architecture.mermaid.md at every promote. Reverting it cannot turn a
+        # gate red, so a tests-only change carrying it used to end "not proven" and block the run.
+        repo = _green_suite_repo()
+        _write(repo, "test_more.py", "def test_more():\n    assert 1 + 1 == 2\n")
+        _write(repo, "docs/architecture.mermaid.md", "graph TD\n")
+        record = prove(gate_cmd="pytest -q", workspace=repo)
+        self.assertTrue(record.skipped_reason, record.error)
+        self.assertEqual(record.error, "")
+        self.assertTrue(run_gate("unit", "pytest -q", workspace=repo, with_proof=True).passed)
+
+    def test_a_real_source_change_beside_the_map_must_still_be_proven(self):
+        repo = _green_suite_repo()
+        _write(repo, "docs/architecture.mermaid.md", "graph TD\n")
+        _write(repo, "helper.py", "VALUE = 1\n")
+        record = prove(gate_cmd="pytest -q", workspace=repo)
+        self.assertEqual(record.skipped_reason, "")
+        self.assertFalse(record.proven)
+
     def test_run_gate_keeps_gate_verdict_when_proof_is_not_applicable(self):
         repo = _green_suite_repo()
         _write(repo, "test_more.py", "def test_more():\n    assert 1 + 1 == 2\n")
