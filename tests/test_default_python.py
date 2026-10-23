@@ -25,3 +25,19 @@ def test_the_reproduce_check_uses_the_hosts_interpreter_and_stays_allowlisted():
     assert command == f"{default_python()} -m pytest tests/test_repro_x.py -q --noconftest -o addopts="
     ok, reason = VerificationPolicy().validate(command)
     assert ok, reason
+
+
+def test_init_ui_writes_the_hosts_default_gate():
+    import yaml
+
+    from kickass_loop_engineer.config import EXAMPLE_CONFIG, UI_GATES_SNIPPET
+    from kickass_loop_engineer.gates import DEFAULT_GATE_CMD
+    gates = yaml.safe_load(EXAMPLE_CONFIG + UI_GATES_SNIPPET)["gates"]
+    assert gates[0] == {"name": "unit", "cmd": DEFAULT_GATE_CMD}
+
+
+def test_the_interview_suggests_a_command_that_runs_on_this_host():
+    from kickass_loop_engineer.gates import DEFAULT_GATE_CMD
+    from kickass_loop_engineer.interview import lint_done_when
+    _, hint = lint_done_when("make it nice")
+    assert f"'{DEFAULT_GATE_CMD} passes'" in hint

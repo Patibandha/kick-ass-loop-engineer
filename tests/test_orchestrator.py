@@ -792,6 +792,9 @@ def test_decompose_off_builds_the_whole_objective_as_one_slice(tmp_path, monkeyp
     assert outcome.state is TerminalState.SUCCESS
     assert _decompose_prompts(builder.provider) == []
     assert len(orch.worktrees.promoted) == 1
+    with open(os.path.join(orch.workspace, ".loop-engineer", "events.jsonl"), encoding="utf-8") as fh:
+        stages = [json.loads(line)["payload"] for line in fh if '"decompose"' in line]
+    assert stages and stages[0].get("mode") == "off"
 
 
 def test_architect_on_runs_for_single_slice(tmp_path, monkeypatch):

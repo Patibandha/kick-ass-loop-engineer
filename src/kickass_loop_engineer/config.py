@@ -214,14 +214,14 @@ guardrails:
 # Appended to EXAMPLE_CONFIG by `loop-engineer init --ui` so a fresh UI project
 # starts with the unit gate plus a Playwright ui gate whose observer snapshots
 # the page (a11y tree) on failure and feeds it back to the builder.
-UI_GATES_SNIPPET = """\
+UI_GATES_SNIPPET = f"""\
 
 # UI gates (written by `loop-engineer init --ui`): the unit gate runs first,
 # then the Playwright ui gate. When the ui gate fails, its observe command
 # captures a page snapshot that feeds the builder's retry context.
 gates:
   - name: unit
-    cmd: "python3 -m pytest -q"
+    cmd: "{DEFAULT_GATE_CMD}"
   - name: ui
     cmd: "npx playwright test"
     observe: "npx playwright-cli snapshot http://localhost:3000"

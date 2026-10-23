@@ -589,7 +589,7 @@ class Orchestrator:
         """
         if self.decompose_mode == "off":
             slices = [RoleSlice(role="build", objective=self.objective.goal)]
-            self.cursor.set_stage("decompose", "done", {"slices": ["build"]})
+            self.cursor.set_stage("decompose", "done", {"slices": ["build"], "mode": "off"})
             return slices
         slices = generate_slices(
             self.objective, self.builder, design_md=design_md,
