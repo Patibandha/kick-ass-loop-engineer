@@ -2,7 +2,7 @@
 import subprocess
 import unittest
 from unittest import mock
-from kickass_loop_engineer.gates import GATES, GateSpec, gate_categories
+from kickass_loop_engineer.gates import GATES, GateSpec, default_python, gate_categories
 from kickass_loop_engineer.guardrails import VerificationPolicy
 
 
@@ -47,7 +47,7 @@ class GateSpecTests(unittest.TestCase):
     def test_defaults(self):
         spec = GateSpec()
         self.assertEqual(spec.name, "unit")
-        self.assertEqual(spec.command, "python3 -m pytest -q")
+        self.assertEqual(spec.command, f"{default_python()} -m pytest -q")
         self.assertIs(spec.prove, True)
         self.assertEqual(spec.observe, "")
 

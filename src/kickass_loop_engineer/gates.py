@@ -7,7 +7,20 @@ fills with concrete targets at run time.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+
+
+def default_python(os_name: str = os.name) -> str:
+    """The interpreter name the engine's own gate commands use on this host.
+
+    Windows has no real ``python3``: the name is the Microsoft Store stub, which never runs a suite.
+    """
+    return "python" if os_name == "nt" else "python3"
+
+
+#: The gate an unconfigured run uses.
+DEFAULT_GATE_CMD = f"{default_python()} -m pytest -q"
 
 
 @dataclass
@@ -33,7 +46,7 @@ class GateSpec:
     """
 
     name: str = "unit"
-    command: str = "python3 -m pytest -q"
+    command: str = DEFAULT_GATE_CMD
     prove: bool = True
     observe: str = ""
     expect: str = ""

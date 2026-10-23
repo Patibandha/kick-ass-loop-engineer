@@ -19,7 +19,7 @@ from .decision.chain import build_chain
 from .decision.settings import parse_settings
 from .ensemble import AttemptSpec, default_specs
 from .escalation import _RISKY_TOKENS
-from .gates import GATES, GateSpec
+from .gates import DEFAULT_GATE_CMD, GATES, GateSpec
 from .guardrails import DEFAULT_VERIFY_PREFIXES, VerificationPolicy
 from .ledger import CostLedger
 from .memory import Memory
@@ -765,7 +765,7 @@ def parse_gates(config: dict[str, Any]) -> list[GateSpec]:
                 f"prove/observe) keys, got {type(entry).__name__}: {entry!r}")
     return [
         GateSpec(name=e.get("name", "unit"),
-                 command=e.get("cmd", "python3 -m pytest -q"),
+                 command=e.get("cmd", DEFAULT_GATE_CMD),
                  prove=bool(e.get("prove", True)),
                  observe=str(e.get("observe", "") or ""),
                  expect=str(e.get("expect", "") or ""),

@@ -20,6 +20,11 @@ come from version control.
 
 ## Unreleased
 
+### Fixed
+- **Default gate and reproduce check on Windows**: both were spelled `python3 -m pytest`, and on Windows `python3` is
+  the Microsoft Store stub, so an unconfigured gate or a fix-mode reproduce check could never pass. They now use
+  `python` on Windows and `python3` elsewhere (`gates.default_python`).
+
 ### Added
 - **`decompose: off`**: builds the whole objective as one slice, with no decompose call. Every slice is gated by the
   run's gates, so a gate that only passes on the finished change (a marker-scoped suite, a whole-suite fix) used to
