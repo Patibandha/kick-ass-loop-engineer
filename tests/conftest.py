@@ -7,7 +7,11 @@ import pytest
 
 
 def pytest_configure(config):
-    """Register the labelled capability-job marker (kept out of the main isolation run)."""
+    """Register the labelled markers (capability job kept out of the main isolation run; proof negatives)."""
+    config.addinivalue_line(
+        "markers",
+        "guardrail_proof: proof-of-test negative tests (missing, forged, stale and cancelled proofs)",
+    )
     config.addinivalue_line(
         "markers",
         "guardrail_isolation_capability: isolation cases needing a host capability (symlinks); "
