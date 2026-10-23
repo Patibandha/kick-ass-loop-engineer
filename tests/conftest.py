@@ -6,6 +6,15 @@ import sys
 import pytest
 
 
+def pytest_configure(config):
+    """Register the labelled capability-job marker (kept out of the main isolation run)."""
+    config.addinivalue_line(
+        "markers",
+        "guardrail_isolation_capability: isolation cases needing a host capability (symlinks); "
+        "capability missing is reported only under this marker",
+    )
+
+
 @pytest.fixture(autouse=True)
 def _interpreter_folder_first_on_path(monkeypatch):
     """Resolve bare ``pytest``/``python`` gates to this interpreter, as in an activated venv.

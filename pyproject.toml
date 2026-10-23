@@ -32,4 +32,5 @@ packages = ["src/kickass_loop_engineer"]
 markers = [
     "slow: long-running integration tests",
     "guardrail_gate: gate fail-open and allowlist-matching tests",
+    "guardrail_isolation: workspace-isolation negative tests (Windows path forms, junctions)",
 ]
