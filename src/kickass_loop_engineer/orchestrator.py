@@ -101,6 +101,14 @@ def _detect_python_package(workspace: str) -> str | None:
     return None
 
 
+def _failed_gate_evidence(attempts) -> list:
+    """Every attempt's failing gate records, as ``{"gate", "command", "evidence"}`` dicts."""
+    return [{"gate": rec.gate, "command": rec.command, "evidence": rec.evidence}
+            for attempt in attempts
+            for rec in getattr(attempt.evidence, "records", [])
+            if not rec.passed]
+
+
 def _failed_gate_names(attempts: list) -> list:
     """Return the sorted names of every gate that failed across *attempts*."""
     names = set()
@@ -1080,7 +1088,8 @@ class Orchestrator:
                     self._feedback = "\n\n".join(self._feedback_entries)
                     return RunOutcome(TerminalState.STALLED, reason,
                                       evidence=[{"observed": observed}])
-                return RunOutcome(TerminalState.STALLED, reason)
+                # The attempts' worktrees are gone: their failing gate output is all that explains the stall.
+                return RunOutcome(TerminalState.STALLED, reason, evidence=_failed_gate_evidence(attempts))
 
             self._losing_attempts += len(attempts) - 1
             winner_files = attempt_files.get(winner.workspace, [])
@@ -1237,11 +1246,14 @@ class Orchestrator:
         """
         for rec in getattr(gates_result, "records", []):
             proof = getattr(rec, "proof", None)
-            self.cursor.emit("gate_result", {
+            payload = {
                 "slice": slice_role, "attempt": attempt,
                 "gate": rec.gate, "ok": rec.passed,
                 "proven": proof.proven if proof is not None else None,
-            })
+            }
+            if not rec.passed:
+                payload["evidence"] = rec.evidence
+            self.cursor.emit("gate_result", payload)
             observed = getattr(rec, "observed", "")
             if not rec.passed and observed:
                 self.cursor.emit("observer_ran", {
