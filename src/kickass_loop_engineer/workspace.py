@@ -165,7 +165,7 @@ class Workspace:
                 continue
 
             target = os.path.abspath(os.path.join(self.root, item.path))
-            if os.path.commonpath([self.root, target]) != self.root:
+            if not self._contained(target):
                 outcome.rejected.append((item.path, "resolves outside workspace"))
                 continue
             if os.path.exists(target) and not self.policy.allow_overwrite:
@@ -184,6 +184,18 @@ class Workspace:
             self.written.add(item.path)
             outcome.written.append(item.path)
         return outcome
+
+    def _contained(self, target: str) -> bool:
+        """Return True when *target* really lands inside the workspace.
+
+        Both sides are resolved through links first, so a junction or symlink inside the workspace
+        that points elsewhere cannot carry a write out; a different drive counts as outside.
+        """
+        try:
+            real_root = os.path.realpath(self.root)
+            return os.path.commonpath([real_root, os.path.realpath(target)]) == real_root
+        except ValueError:
+            return False
 
     def fingerprint(self) -> dict:
         """Return ``{relative path: sha256 hex}`` for every changed file.
