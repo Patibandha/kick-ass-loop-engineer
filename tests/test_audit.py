@@ -38,7 +38,7 @@ def _git_repo(tmp_path, files):
     for rel, content in files.items():
         path = repo / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
+        path.write_text(content, newline="")
     for cmd in (["git", "init", "-q"], ["git", "add", "-A"],
                 ["git", "-c", "user.email=t@t", "-c", "user.name=t",
                  "commit", "-qm", "init"]):

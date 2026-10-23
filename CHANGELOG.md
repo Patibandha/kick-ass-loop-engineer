@@ -21,6 +21,9 @@ come from version control.
 ## 3.4.0 — Windows default gate, one-slice builds, ^ and % rejected (2026-10-22)
 
 ### Fixed
+- **The test suite passes on Windows** (was 25 failures): fixtures are written byte-exact, path checks compare
+  the way the OS does, tests use the host's default gate, and `tests/conftest.py` puts the running interpreter's
+  folder first on PATH. New `tests/test_autocrlf.py` proves a change in `core.autocrlf` true and false repos.
 - **`^` and `%` are shell metacharacters**: cmd.exe treats them as escape and variable expansion, and Windows runs
   a `.cmd`/`.bat` gate shim through cmd.exe, so the gate allowlist now rejects both.
 - **`init --ui` and the interview** suggest the host's default gate (`python -m pytest -q` on Windows) instead of
