@@ -31,6 +31,7 @@ packages = ["src/kickass_loop_engineer"]
 [tool.pytest.ini_options]
 # Capability cases (symlinks may need privilege) run only in their own labelled job:
 #   python -m pytest -q -m guardrail_isolation_capability
+pythonpath = ["src"]
 addopts = "-m 'not guardrail_isolation_capability'"
 markers = [
     "slow: long-running integration tests",
