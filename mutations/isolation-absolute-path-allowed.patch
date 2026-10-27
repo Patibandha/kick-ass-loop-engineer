@@ -1,0 +1,13 @@
+diff --git a/src/kickass_loop_engineer/guardrails.py b/src/kickass_loop_engineer/guardrails.py
+index 51806dc..8836d67 100644
+--- a/src/kickass_loop_engineer/guardrails.py
++++ b/src/kickass_loop_engineer/guardrails.py
+@@ -93,7 +93,7 @@ class WritePolicy:
+         # Judged the same on every host: a backslash is a separator, so a Windows-only spelling is
+         # refused on POSIX too instead of being written as an odd filename.
+         posix = rel_path.replace("\\", "/")
+-        if os.path.isabs(rel_path) or posixpath.isabs(posix):
++        if False:
+             return False, "absolute paths are not allowed"
+         if ":" in posix:
+             return False, "drive letters and alternate data streams (':') are not allowed"

@@ -14,6 +14,10 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
+        "mutation_check: tests for scripts/check_mutations.py and the patches under mutations/",
+    )
+    config.addinivalue_line(
+        "markers",
         "guardrail_isolation_capability: isolation cases needing a host capability (symlinks); "
         "capability missing is reported only under this marker",
     )

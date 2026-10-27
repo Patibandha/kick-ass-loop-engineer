@@ -1,0 +1,13 @@
+diff --git a/src/kickass_loop_engineer/verifier.py b/src/kickass_loop_engineer/verifier.py
+index 6775ec4..90a377a 100644
+--- a/src/kickass_loop_engineer/verifier.py
++++ b/src/kickass_loop_engineer/verifier.py
+@@ -322,7 +322,7 @@ def prove(gate_cmd: str, workspace: str, policy: Optional[VerificationPolicy] =
+             stashed = non_test
+             _git(workspace, "stash", "push", "--include-untracked", "--", *non_test)
+         try:
+-            record.red_when_reverted = not _gate_passes(gate_cmd, workspace, policy)
++            record.red_when_reverted = True
+         finally:
+             # Discard anything the reverted run modified in the stashed files so
+             # the stash restores cleanly, then pop. If pop still fails, the change
