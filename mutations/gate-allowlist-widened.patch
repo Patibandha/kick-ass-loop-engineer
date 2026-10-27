@@ -1,0 +1,13 @@
+diff --git a/src/kickass_loop_engineer/guardrails.py b/src/kickass_loop_engineer/guardrails.py
+index 51806dc..49eb45b 100644
+--- a/src/kickass_loop_engineer/guardrails.py
++++ b/src/kickass_loop_engineer/guardrails.py
+@@ -215,7 +215,7 @@ class VerificationPolicy:
+             return False, "empty command"
+         if any(meta in stripped for meta in _SHELL_METACHARACTERS):
+             return False, "shell metacharacters are not allowed"
+-        if not any(stripped == p or stripped.startswith(p + " ") for p in self.allowed_prefixes):
++        if not any(stripped == p or stripped.startswith(p) for p in self.allowed_prefixes):
+             return False, f"command not in verification allowlist: {stripped!r}"
+         return True, ""
+ 

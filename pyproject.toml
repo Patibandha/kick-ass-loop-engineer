@@ -37,4 +37,5 @@ markers = [
     "slow: long-running integration tests",
     "guardrail_gate: gate fail-open and allowlist-matching tests",
     "guardrail_isolation: workspace-isolation negative tests (Windows path forms, junctions)",
+    "mutation_check: tests for scripts/check_mutations.py and the patches under mutations/",
 ]

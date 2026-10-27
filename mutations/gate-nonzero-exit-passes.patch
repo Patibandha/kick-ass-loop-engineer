@@ -1,0 +1,13 @@
+diff --git a/src/kickass_loop_engineer/guardrails.py b/src/kickass_loop_engineer/guardrails.py
+index 51806dc..4382d0d 100644
+--- a/src/kickass_loop_engineer/guardrails.py
++++ b/src/kickass_loop_engineer/guardrails.py
+@@ -264,7 +264,7 @@ class VerificationPolicy:
+             return VerificationResult(passed=False, command=command, error=f"failed to run: {exc}")
+ 
+         result = VerificationResult(
+-            passed=completed.returncode == 0,
++            passed=True,
+             command=command,
+             returncode=completed.returncode,
+             stdout_tail=(completed.stdout or "")[-self.tail_chars:],
