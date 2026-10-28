@@ -38,7 +38,7 @@ def _git_repo(tmp_path, files):
     for rel, content in files.items():
         path = repo / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
+        path.write_text(content, newline="")
     for cmd in (["git", "init", "-q"], ["git", "add", "-A"],
                 ["git", "-c", "user.email=t@t", "-c", "user.name=t",
                  "commit", "-qm", "init"]):
@@ -344,6 +344,9 @@ def test_run_audit_writes_nothing_outside_loop_engineer(tmp_path):
                     seen[full] = (os.stat(full).st_mtime_ns, handle.read())
         return seen
 
+    # Settle git's own index first: a status read may rewrite stale stat data in it (seen on macOS), which is
+    # git, not the audit. Any later index write by the audit still shows.
+    subprocess.run(["git", "update-index", "-q", "--refresh"], cwd=repo, check=False, capture_output=True)
     before = snapshot()
     run_audit(_reviewer(["FINDING: a.py: planted"]), "MAP",
               [("a.py", "A = 1\n")], [], repo, None, on_usage=None)

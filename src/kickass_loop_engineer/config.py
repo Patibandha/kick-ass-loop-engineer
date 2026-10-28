@@ -19,7 +19,7 @@ from .decision.chain import build_chain
 from .decision.settings import parse_settings
 from .ensemble import AttemptSpec, default_specs
 from .escalation import _RISKY_TOKENS
-from .gates import GATES, GateSpec
+from .gates import DEFAULT_GATE_CMD, GATES, GateSpec
 from .guardrails import DEFAULT_VERIFY_PREFIXES, VerificationPolicy
 from .ledger import CostLedger
 from .memory import Memory
@@ -52,7 +52,7 @@ EXAMPLE_CONFIG = """\
 # engine harvests whatever changed — the guardrails apply to both.
 
 builder:
-  provider: ollama            # claude_code | gemini | ollama | anthropic | openai_compat
+  provider: ollama            # claude_code | codex_cli | agy_cli (= gemini) | ollama | anthropic | openai_compat
   model: kimi-k2.7-code:cloud  # any pulled Ollama tag
   host: http://localhost:11434
 
@@ -60,6 +60,11 @@ builder:
 #   provider: claude_code      # agentic: edits the worktree in place (Claude Max subscription)
 #   model: opus                # optional; omit to use the CLI's default model
 #   family: claude             # the reviewer's family must differ from this one
+
+# builder:                     # ALTERNATIVE: Codex on a ChatGPT subscription (agentic, edits in place)
+#   provider: codex_cli        # codex exec; timeouts kill the whole process tree
+#   model: gpt-6-astra         # optional; omit for the CLI default
+#   family: gpt                # detected from gpt/codex names; the reviewer must differ
 
 # builder:                     # ALTERNATIVE: any OpenAI-compatible /chat/completions endpoint
 #   provider: openai_compat
@@ -127,6 +132,12 @@ guardrails:
 #                              # (validated design.md, then re-decompose against it);
 #                              # on = always architect, even single-slice; off = never.
 #                              # CLI --architect / --no-architect override this value.
+
+# decompose: auto              # role-slice decomposition: auto | off.
+#                              # auto (default) = the builder splits the objective
+#                              # into 1-5 slices, each gated on its own; off = build
+#                              # the whole objective as one slice (no decompose call),
+#                              # for gates that only pass on the finished change.
 
 # mode: auto                   # task mode: auto | build | enhance | fix | audit.
 #                              # auto (default) detects: git-tracked files in the
@@ -203,14 +214,14 @@ guardrails:
 # Appended to EXAMPLE_CONFIG by `loop-engineer init --ui` so a fresh UI project
 # starts with the unit gate plus a Playwright ui gate whose observer snapshots
 # the page (a11y tree) on failure and feeds it back to the builder.
-UI_GATES_SNIPPET = """\
+UI_GATES_SNIPPET = f"""\
 
 # UI gates (written by `loop-engineer init --ui`): the unit gate runs first,
 # then the Playwright ui gate. When the ui gate fails, its observe command
 # captures a page snapshot that feeds the builder's retry context.
 gates:
   - name: unit
-    cmd: "python3 -m pytest -q"
+    cmd: "{DEFAULT_GATE_CMD}"
   - name: ui
     cmd: "npx playwright test"
     observe: "npx playwright-cli snapshot http://localhost:3000"
@@ -350,7 +361,7 @@ _ATTEMPT_KEYS = ("model", "temperature", "provider", "family")
 #: Providers whose constructor has NO temperature parameter: an attempt spec's
 #: temperature is stripped (with a once-per-model warning) instead of causing
 #: a TypeError deep inside provider construction.
-_TEMPERATURE_FREE_PROVIDERS = ("claude_code", "anthropic", "gemini")
+_TEMPERATURE_FREE_PROVIDERS = ("claude_code", "anthropic", "gemini", "agy_cli", "codex_cli")
 
 #: Providers whose constructor REQUIRES a ``model`` argument (no default). A
 #: cross-provider attempt spec that switches to one of these MUST name a model,
@@ -547,6 +558,29 @@ def architect_mode(config: dict[str, Any]) -> str:
     return mode
 
 
+_DECOMPOSE_MODES = ("auto", "off")
+
+
+def decompose_mode(config: dict[str, Any]) -> str:
+    """Return the validated decomposition mode from config.
+
+    Args:
+        config: Parsed config with an optional top-level ``decompose`` key.
+
+    Returns:
+        ``"auto"`` (the default) or ``"off"``; YAML's bare ``off`` (False) is ``"off"``.
+
+    Raises:
+        RuntimeError: When the configured value is neither mode.
+    """
+    raw = config.get("decompose", "auto")
+    mode = "off" if raw is False else str(raw)
+    if mode not in _DECOMPOSE_MODES:
+        raise RuntimeError(
+            f"decompose must be one of {', '.join(_DECOMPOSE_MODES)} (got {mode!r})")
+    return mode
+
+
 def task_mode(config: dict[str, Any]) -> str:
     """Return the validated task mode from config.
 
@@ -731,7 +765,7 @@ def parse_gates(config: dict[str, Any]) -> list[GateSpec]:
                 f"prove/observe) keys, got {type(entry).__name__}: {entry!r}")
     return [
         GateSpec(name=e.get("name", "unit"),
-                 command=e.get("cmd", "python3 -m pytest -q"),
+                 command=e.get("cmd", DEFAULT_GATE_CMD),
                  prove=bool(e.get("prove", True)),
                  observe=str(e.get("observe", "") or ""),
                  expect=str(e.get("expect", "") or ""),
@@ -961,6 +995,7 @@ def build_orchestrator(config: dict[str, Any], *, workspace: str, month: str,
         pricing=pricing_table,
         format_retries=format_retries,
         architect_mode=architect_mode(config),
+        decompose_mode=decompose_mode(config),
         visual_cfg=visual_cfg,
         visual_provider=visual_provider,
         mode=task_mode(config),

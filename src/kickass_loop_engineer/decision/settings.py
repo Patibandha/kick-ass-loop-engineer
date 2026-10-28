@@ -9,6 +9,8 @@ from .floors import REVIEW_LEVELS, SECURITY_LEVELS, SENSITIVE_DOMAINS
 
 DEFAULT_MAX_ATTEMPTS = 3
 _BACKENDS = ("jev", "rules")
+#: Stage floors: ``run`` forces the stage on whatever the model picks; ``auto`` lets it decide.
+STAGE_FLOORS = ("auto", "run")
 
 
 @dataclass(frozen=True)
@@ -22,6 +24,8 @@ class DecisionSettings:
         review_min: Global review floor (``light``/``standard``/``strict``).
         signoff_domains: Sensitive domains that force human sign-off (L4).
         max_attempts: Ceiling on attempts per slice the model may choose.
+        qa_min: ``run`` forces the QA stage on; ``auto`` lets the model decide.
+        devops_min: ``run`` forces the DevOps/ship stage on; ``auto`` lets the model decide.
         tiers: Ordered cheap -> strong ``AttemptSpec`` ladder (may be empty).
         jev: Raw Jev client options (model, base_url, api_key_env, timeout_s).
     """
@@ -33,6 +37,8 @@ class DecisionSettings:
     signoff_domains: tuple = ()
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
     tiers: tuple = ()
+    qa_min: str = "auto"
+    devops_min: str = "auto"
     jev: dict = field(default_factory=dict)
 
     def tier_names(self) -> tuple:
@@ -61,6 +67,11 @@ def parse_settings(section: dict, tiers: tuple) -> DecisionSettings:
         raise RuntimeError(f"decision.floors.security must be one of {SECURITY_LEVELS}")
     if review_min not in REVIEW_LEVELS:
         raise RuntimeError(f"decision.floors.review must be one of {REVIEW_LEVELS}")
+    stage_floors = {}
+    for stage in ("qa", "devops"):
+        stage_floors[stage] = str(floors.get(stage, "auto"))
+        if stage_floors[stage] not in STAGE_FLOORS:
+            raise RuntimeError(f"decision.floors.{stage} must be one of {STAGE_FLOORS}")
     signoff = tuple(str(d) for d in (section.get("signoff_domains") or ()))
     unknown = sorted(set(signoff) - set(SENSITIVE_DOMAINS))
     if unknown:
@@ -84,4 +95,5 @@ def parse_settings(section: dict, tiers: tuple) -> DecisionSettings:
     return DecisionSettings(backend=backend, min_confidence=min_confidence,
                             security_min=security_min, review_min=review_min,
                             signoff_domains=signoff, max_attempts=max_attempts,
-                            tiers=tuple(tiers), jev=jev)
+                            tiers=tuple(tiers), jev=jev, qa_min=stage_floors["qa"],
+                            devops_min=stage_floors["devops"])

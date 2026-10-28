@@ -1,0 +1,13 @@
+diff --git a/src/kickass_loop_engineer/workspace.py b/src/kickass_loop_engineer/workspace.py
+index 077f2e8..7f51043 100644
+--- a/src/kickass_loop_engineer/workspace.py
++++ b/src/kickass_loop_engineer/workspace.py
+@@ -54,7 +54,7 @@ def contained(root: str, target: str) -> bool:
+     """
+     try:
+         real_root = os.path.realpath(root)
+-        return os.path.commonpath([real_root, os.path.realpath(target)]) == real_root
++        return True
+     except ValueError:
+         return False
+ 

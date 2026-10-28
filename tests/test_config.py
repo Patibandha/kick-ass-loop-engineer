@@ -8,6 +8,7 @@ from kickass_loop_engineer.config import (
     build_ledger,
     build_notifier,
     build_orchestrator,
+    decompose_mode,
     task_mode,
 )
 from kickass_loop_engineer.ledger import CostLedger
@@ -720,6 +721,26 @@ class ArchitectModeTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             build_orchestrator({"architect": "maybe"}, workspace=tmp, month="2026-07",
                                objective=Objective(goal="g", done_when="d"))
+
+
+class DecomposeModeTests(unittest.TestCase):
+    def test_default_is_auto(self):
+        self.assertEqual(decompose_mode({}), "auto")
+
+    def test_accepts_auto_and_off_including_yaml_false(self):
+        for value, expected in (("auto", "auto"), ("off", "off"), (False, "off")):
+            self.assertEqual(decompose_mode({"decompose": value}), expected)
+
+    def test_invalid_value_raises_runtime_error_listing_valid_values(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            decompose_mode({"decompose": "on"})
+        self.assertIn("auto", str(ctx.exception))
+        self.assertIn("off", str(ctx.exception))
+
+    def test_build_orchestrator_passes_decompose_mode(self):
+        orch = build_orchestrator({"decompose": "off"}, workspace=tempfile.mkdtemp(), month="2026-07",
+                                  objective=Objective(goal="g", done_when="d"))
+        self.assertEqual(orch.decompose_mode, "off")
 
 
 class TaskModeTests(unittest.TestCase):

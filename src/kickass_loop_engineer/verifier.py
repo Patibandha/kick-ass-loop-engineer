@@ -16,6 +16,13 @@ no non-test file to revert — a tests-only change — has no proof to give, so
 ``prove`` records a ``skipped_reason`` and the gate's own exit code stands (see
 ``run_gate``).
 
+Test-support files (``conftest.py``, helpers under ``tests/``) are the exception
+to "tests stay": implementation hidden there would survive the revert and the
+proof would be vacuous. ``prove`` therefore reverts them together with the
+non-test files. When the gate then turns red and ONLY test-support files were
+reverted, the record is proven but carries ``support_only`` so the evidence and
+the cross-model reviewer can check that no product code lives there.
+
 Verdicts come from real artifacts in the workspace (process exit codes), never
 from a model's transcript:
     "Use the worktree and external state as authoritative. Do not rely on intent,
@@ -24,10 +31,12 @@ from a model's transcript:
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from dataclasses import dataclass, field, replace
 from typing import Optional
 
+from .archmap import ARCHMAP_RELPATH
 from .gates import GATES
 from .guardrails import VerificationPolicy
 
@@ -63,6 +72,8 @@ class ProofRecord:
             non-test file to revert). Set only for that case, and it is what
             tells ``run_gate`` to keep the gate's own verdict; ``proven`` stays
             False because nothing was proven.
+        support_only: Test-support files whose revert alone turned the gate
+            red (no non-test file was reverted). Empty for every other proof.
     """
 
     gate_cmd: str
@@ -72,6 +83,7 @@ class ProofRecord:
     error: str = ""
     aborted: bool = False
     skipped_reason: str = ""
+    support_only: list[str] = field(default_factory=list)
 
     @property
     def proven(self) -> bool:
@@ -86,8 +98,19 @@ def _gate_passes(gate_cmd: str, workspace: str, policy: VerificationPolicy) -> b
 
 def _git(workspace: str, *args: str, timeout: float = 60.0) -> subprocess.CompletedProcess:
     """Run a git subcommand in the workspace, raising on failure or timeout."""
-    return subprocess.run(["git", *args], cwd=workspace, capture_output=True,
-                          text=True, check=True, timeout=timeout)
+    # UTF-8 is git's own encoding for paths; the locale code page (cp1252 on a default Windows) garbled
+    # non-ASCII names, so a proof could not stash them and a real candidate ended "not proven".
+    return subprocess.run(["git", *args], cwd=workspace, capture_output=True, encoding="utf-8",
+                          errors="surrogateescape", check=True, timeout=timeout)
+
+
+def _is_engine_generated(path: str) -> bool:
+    """Say whether git reports *path* as a file the engine itself regenerates (the architecture map).
+
+    The engine rewrites it at every promote and no gate reads it, so reverting it can never turn a gate red:
+    counting it as a source change would make every tests-only change "not proven".
+    """
+    return path.replace("\\", "/") == ARCHMAP_RELPATH.replace(os.sep, "/")
 
 
 def _is_test_path(path: str) -> bool:
@@ -111,6 +134,30 @@ def _is_test_path(path: str) -> bool:
         return True
     return (basename.startswith("test_") or basename.endswith("_test.py")
             or basename == "conftest.py")
+
+
+def _is_test_support(path: str) -> bool:
+    """Say whether a repo-relative path is a test-support file.
+
+    Test-support is a test path that is not a test module: ``conftest.py``
+    anywhere, or a ``.py`` file under a ``tests/`` or ``test/`` folder whose
+    name neither starts with ``test_`` nor ends with ``_test.py``. Such files
+    can hold product code that the new tests import, so the proof reverts them.
+
+    Args:
+        path: A repo-relative, forward-slashed path, exactly as git reports it.
+
+    Returns:
+        True for test-support files, False for test modules and everything else.
+    """
+    if not _is_test_path(path):
+        return False
+    basename = path.split("/")[-1]
+    if basename == "conftest.py":
+        return True
+    if not basename.endswith(".py"):
+        return False
+    return not (basename.startswith("test_") or basename.endswith("_test.py"))
 
 
 def _changed_entries(workspace: str) -> list[tuple[str, str]]:
@@ -145,7 +192,8 @@ def _changed_entries(workspace: str) -> list[tuple[str, str]]:
             continue
         code, changed = field_value[:2], field_value[3:]
         entries.append((code, changed))
-        if code[0] in ("R", "C") and position < len(fields):
+        # Staged (first column) or worktree (second column) rename/copy: both carry a source path.
+        if (code[0] in ("R", "C") or code[1] in ("R", "C")) and position < len(fields):
             entries.append((code, fields[position]))  # the rename/copy source
             position += 1
     return entries
@@ -289,15 +337,19 @@ def prove(gate_cmd: str, workspace: str, policy: Optional[VerificationPolicy] = 
             return record
         # dict.fromkeys: de-duplicate while keeping git's order for the message.
         non_test = list(dict.fromkeys(changed for _code, changed in entries
-                                      if not _is_test_path(changed)))
-        if not non_test:
-            changed_tests = sorted({changed for _code, changed in entries})
-            record.skipped_reason = (
-                "proof-of-test does not apply: the change touches only test "
-                f"files ({_summarize(changed_tests)})"
-            )
+                                      if not _is_test_path(changed) and not _is_engine_generated(changed)))
+        support = [changed for changed in dict.fromkeys(
+            changed for _code, changed in entries) if _is_test_support(changed)]
+        to_revert = non_test + support
+        changed_tests = sorted({changed for _code, changed in entries})
+        tests_only_reason = (
+            "proof-of-test does not apply: the change touches only test "
+            f"files ({_summarize(changed_tests)})"
+        )
+        if not to_revert:
+            record.skipped_reason = tests_only_reason
             return record
-        unstashable = _unstashable(workspace, entries, non_test)
+        unstashable = _unstashable(workspace, entries, to_revert)
         stashed: Optional[list[str]] = None  # None: the whole tree was stashed
         if unstashable:
             # git cannot scope a stash to a staged deletion or a rename source,
@@ -308,10 +360,12 @@ def prove(gate_cmd: str, workspace: str, policy: Optional[VerificationPolicy] = 
                 "a stash to %s", workspace, _summarize(unstashable))
             _git(workspace, "stash", "push", "--include-untracked")
         else:
-            stashed = non_test
-            _git(workspace, "stash", "push", "--include-untracked", "--", *non_test)
+            stashed = to_revert
+            _git(workspace, "stash", "push", "--include-untracked", "--", *to_revert)
         try:
             record.red_when_reverted = not _gate_passes(gate_cmd, workspace, policy)
+            if record.red_when_reverted and not non_test:
+                record.support_only = list(support)
         finally:
             # Discard anything the reverted run modified in the stashed files so
             # the stash restores cleanly, then pop. If pop still fails, the change
@@ -330,11 +384,47 @@ def prove(gate_cmd: str, workspace: str, policy: Optional[VerificationPolicy] = 
         if record.aborted:
             return record
         record.green_after = _gate_passes(gate_cmd, workspace, policy)
+        if not non_test and not record.red_when_reverted:
+            # Only test-support files changed and the gate does not need them
+            # (a marker-registration line in conftest.py): the tests-only waiver.
+            record.skipped_reason = tests_only_reason
     except subprocess.CalledProcessError as exc:
         record.error = f"git operation failed: {(exc.stderr or exc)}"
     except subprocess.TimeoutExpired as exc:
         record.error = f"git operation timed out: {exc}"
     return record
+
+
+def support_only_line(paths: list[str]) -> str:
+    """Name the test-support files a proof was carried by, for evidence and review.
+
+    Args:
+        paths: The ``ProofRecord.support_only`` files.
+
+    Returns:
+        One line stating the files and asking for confirmation that no product
+        code lives in them.
+    """
+    return (f"proof reverted only test-support files ({_summarize(paths)}); "
+            "reviewer: confirm no product code lives in test-support files")
+
+
+def support_only_note(gates) -> str:
+    """Collect the support-only lines of a ``GatesResult`` for the cross-model review.
+
+    Args:
+        gates: A ``GatesResult`` (or any object without ``records``).
+
+    Returns:
+        The lines joined by newlines, or an empty string when no proof was
+        carried by test-support files alone.
+    """
+    lines = []
+    for rec in getattr(gates, "records", None) or []:
+        support = getattr(getattr(rec, "proof", None), "support_only", None)
+        if support:
+            lines.append(support_only_line(list(support)))
+    return "\n".join(lines)
 
 
 @dataclass
@@ -359,8 +449,29 @@ class EvidenceRecord:
                           "red_when_reverted": self.proof.red_when_reverted,
                           "green_after": self.proof.green_after, "aborted": self.proof.aborted,
                           "error": self.proof.error,
-                          "skipped_reason": self.proof.skipped_reason}
+                          "skipped_reason": self.proof.skipped_reason,
+                          "support_only": list(self.proof.support_only)}
         return d
+
+
+#: The last characters of gate output kept as evidence, and the cap on each named failure line kept beside them.
+EVIDENCE_TAIL_CHARS = 200
+EVIDENCE_LINE_CHARS = 300
+EVIDENCE_MAX_NAMED = 5
+
+
+def _evidence_tail(output: str) -> str:
+    """The end of a gate's output, plus pytest's ``FAILED``/``ERROR`` lines that the end alone cut off.
+
+    The bare tail often holds only the end of an assertion message (long temp paths on CI fill it), so a stall
+    report could not say which test failed.
+    """
+    text = output.strip()
+    tail = text[-EVIDENCE_TAIL_CHARS:]
+    named = [line[:EVIDENCE_LINE_CHARS] for line in text.splitlines()
+             if line.startswith(("FAILED ", "ERROR "))][:EVIDENCE_MAX_NAMED]
+    missing = [line for line in named if line not in tail]
+    return "\n".join([*missing, tail]) if missing else tail
 
 
 def run_gate(name: str, command: str, workspace: str, with_proof: bool = False,
@@ -385,12 +496,14 @@ def run_gate(name: str, command: str, workspace: str, with_proof: bool = False,
     policy = policy or VerificationPolicy()
     expectation = {"expect": expect, "min_count": min_count} if expect else {}
     result = policy.run(command, cwd=workspace, **expectation)
-    evidence = f"exit={result.returncode}; {(result.stdout_tail or result.stderr_tail or '').strip()[-200:]}"
+    evidence = f"exit={result.returncode}; {_evidence_tail(result.stdout_tail or result.stderr_tail or '')}"
     if result.error:
         evidence = f"error: {result.error}"
     record = EvidenceRecord(gate=name, command=command, passed=result.passed, evidence=evidence)
     if with_proof and result.passed:
         record.proof = prove(command, workspace, policy)
+        if record.proof.support_only:
+            record.evidence += "; " + support_only_line(record.proof.support_only)
         if record.proof.skipped_reason:
             logger.info("gate %r keeps its own verdict: %s", name,
                         record.proof.skipped_reason)

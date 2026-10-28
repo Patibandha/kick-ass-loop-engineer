@@ -100,3 +100,25 @@ def test_plan_round_trips_through_the_artifact(tmp_path):
     plan.save(str(tmp_path))
     assert load_plan(str(tmp_path))["security"] == "L3"
     assert load_plan(str(tmp_path / "missing")) is None
+
+
+def test_qa_and_devops_floors_override_a_skip():
+    plan = apply_run_choices(StaffingPlan(run_id="r"), {"qa": "skip", "devops": "skip"}, domains=[],
+                             security_min="L1", review_min="light", signoff_domains=(),
+                             qa_min="run", devops_min="run")
+    assert plan.qa is True and plan.devops is True
+    assert any("qa" in note for note in plan.floors) and any("devops" in note for note in plan.floors)
+
+
+def test_auto_qa_and_devops_floors_keep_the_models_choice():
+    plan = _apply({"qa": "skip", "devops": "skip"}, [])
+    assert plan.qa is False and plan.devops is False
+
+
+def test_qa_and_devops_floor_values_are_validated():
+    from kickass_loop_engineer.decision.settings import parse_settings
+    assert parse_settings({"floors": {"qa": "run", "devops": "run"}}, ()).qa_min == "run"
+    with pytest.raises(RuntimeError, match="decision.floors.qa"):
+        parse_settings({"floors": {"qa": "always"}}, ())
+    with pytest.raises(RuntimeError, match="decision.floors.devops"):
+        parse_settings({"floors": {"devops": 1}}, ())
