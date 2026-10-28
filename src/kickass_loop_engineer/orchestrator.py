@@ -45,7 +45,8 @@ from .reproduce import FIX_MODE_RULES, generate_repro, repro_check_command
 from .review import CrossModelReviewError, blocking_findings, write_slice_review
 from .session import BuildSession
 from .terminal import RunOutcome, TerminalState
-from .verifier import OBSERVER_CAP, EvidenceRecord, GatesResult, run_gates, support_only_note
+from .verifier import (OBSERVER_CAP, EvidenceRecord, GatesResult, bound_digest, run_gates, still_fresh,
+                       support_only_note)
 from .visual import visual_critique
 from .workspace import Workspace, write_text_unlinked
 from .worktree import WorktreeError
@@ -1196,8 +1197,20 @@ class Orchestrator:
             raise
 
         # 9. Promote the winner; clean up every attempt worktree either way.
+        #    Review ran after the gates: a winner whose candidate changed in
+        #    between is stale and never promoted on the earlier verdict.
+        if not still_fresh(winner.evidence, winner.workspace):
+            self._remove_attempts(attempts)
+            return RunOutcome(
+                TerminalState.BLOCKED,
+                f"candidate for slice '{slice_.role}' changed after its gate passed; "
+                "the earlier verdict is stale and was not promoted (fail closed)")
+        bound = bound_digest(winner.evidence)
         try:
-            self.worktrees.promote(winner.workspace, self.workspace)
+            if bound is None:
+                self.worktrees.promote(winner.workspace, self.workspace)
+            else:
+                self.worktrees.promote(winner.workspace, self.workspace, expected_digest=bound)
         except WorktreeError as exc:
             return RunOutcome(TerminalState.BLOCKED, f"promotion failed: {exc}")
         finally:

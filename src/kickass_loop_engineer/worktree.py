@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 from typing import Generator, Optional
 
-from .workspace import changed_paths, contained
+from .workspace import candidate_files, changed_paths, contained, digest_matches, digest_of
 
 
 class WorktreeError(Exception):
@@ -158,7 +158,8 @@ class WorktreeManager:
         finally:
             self.remove(path)
 
-    def promote(self, src_worktree: str, dest_workspace: str) -> list[str]:
+    def promote(self, src_worktree: str, dest_workspace: str,
+                expected_digest: Optional[str] = None) -> list[str]:
         """Copy the winning attempt's changed files into the main workspace.
 
         Selection, never merging: only files that differ from HEAD in the
@@ -175,6 +176,12 @@ class WorktreeManager:
         dest_workspace:
             Path to the main workspace that should receive the promoted
             files.
+        expected_digest:
+            The gate verdict's candidate binding (``GatesResult.candidate_digest``).
+            When given, the files are read once, their binding is checked against
+            it, and exactly the bytes that were checked are written: a candidate
+            changed after its gate passed (even back to the same bytes) is refused
+            and nothing is promoted.  An empty binding is always refused.
 
         Returns
         -------
@@ -185,34 +192,35 @@ class WorktreeManager:
         ------
         WorktreeError
             If ``git status`` fails in *src_worktree*, a promoted path would
-            escape *dest_workspace*, or a file cannot be copied.
+            escape *dest_workspace*, a file cannot be copied, or the candidate
+            no longer matches *expected_digest*.
         """
         src = os.path.abspath(src_worktree)
         dest = os.path.abspath(dest_workspace)
         try:
-            changed = changed_paths(src)
+            # Deletions/dirs are never propagated; symlinks are never followed
+            # (a link out of the worktree would exfiltrate its target's contents).
+            files = candidate_files(src)
         except subprocess.CalledProcessError as exc:
             detail = (exc.stderr or "").strip() or str(exc)
             raise WorktreeError(f"could not read worktree status: {detail}") from exc
         except (subprocess.TimeoutExpired, OSError) as exc:
             raise WorktreeError(f"could not read worktree status: {exc}") from exc
+        if expected_digest is not None and not digest_matches(expected_digest, digest_of(files)):
+            raise WorktreeError("candidate changed after its gate passed; the earlier verdict is "
+                                "stale and nothing was promoted (fail closed)")
 
         promoted: list[str] = []
-        for rel in changed:
-            if not rel or rel.startswith(".loop-engineer/") or rel == ".loop-engineer":
-                continue
-            src_path = os.path.join(src, rel)
-            # Deletions/dirs are never propagated; symlinks are never followed
-            # (a link out of the worktree would exfiltrate its target's contents).
-            if os.path.islink(src_path) or not os.path.isfile(src_path):
-                continue
+        for rel, content, _mtime_ns in files:
             target = os.path.abspath(os.path.join(dest, rel))
             # Resolved through links: the user's workspace may hold a junction the worktree did not.
             if not contained(dest, target):
                 raise WorktreeError(f"promotion path escapes workspace: {rel!r}")
             try:
                 os.makedirs(os.path.dirname(target), exist_ok=True)
-                shutil.copy2(src_path, target)
+                with open(target, "wb") as handle:
+                    handle.write(content)
+                shutil.copystat(os.path.join(src, rel), target)
             except OSError as exc:
                 raise WorktreeError(f"could not promote {rel!r}: {exc}") from exc
             promoted.append(rel)
