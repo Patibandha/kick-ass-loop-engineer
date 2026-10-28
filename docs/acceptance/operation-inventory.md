@@ -56,7 +56,7 @@ review, next and cursor folders were added above: they are `.loop-engineer/` or 
 that the map covers only as "everything in the workspace". Import-time bytecode writes and the steps inside
 one `rmtree` are filtered out by the monitor and not listed.
 
-**Defects for Meet** (left out of the table on purpose, so `compare_audit.py` keeps listing them):
+**Defects found, fixed 2026-10-28** (all three now write through `write_text_unlinked` / `append_line_unlinked`, which refuse a link; `tests/test_run_state_links.py`):
 
 | Event | File | Function | Finding |
 |---|---|---|---|
