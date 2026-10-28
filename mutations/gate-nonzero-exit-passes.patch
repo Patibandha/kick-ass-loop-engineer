@@ -1,9 +1,9 @@
 diff --git a/src/kickass_loop_engineer/guardrails.py b/src/kickass_loop_engineer/guardrails.py
-index d6907e6..c41bf29 100644
+index 51d4660..9ae9ebb 100644
 --- a/src/kickass_loop_engineer/guardrails.py
 +++ b/src/kickass_loop_engineer/guardrails.py
-@@ -271,7 +271,7 @@ class VerificationPolicy:
-             shutil.rmtree(env["PYTHONPYCACHEPREFIX"], ignore_errors=True)
+@@ -274,7 +274,7 @@ class VerificationPolicy:
+                 shutil.rmtree(pycache, ignore_errors=True)
  
          result = VerificationResult(
 -            passed=completed.returncode == 0,
