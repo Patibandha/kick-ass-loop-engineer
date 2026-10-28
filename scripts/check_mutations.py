@@ -13,7 +13,8 @@ It then requires the unmutated ``HEAD`` to pass every marker it used. Exit statu
 mutation was caught and the clean run is green; 1 otherwise; 2 on a usage error. Standard library only.
 
 Families map to markers: ``gate-*`` -> ``guardrail_gate``, ``isolation-*`` -> ``guardrail_isolation``,
-``proof-*`` -> ``guardrail_proof``. The mutations are applied to the committed ``HEAD``, so commit (or
+``proof-*`` -> ``guardrail_proof`` and ``proof-transition-*`` -> ``guardrail_proof_transition`` (the longest
+matching family wins). The mutations are applied to the committed ``HEAD``, so commit (or
 otherwise record) the code under test before running the check. Nothing from the environment is printed.
 """
 
@@ -35,6 +36,7 @@ FAMILY_MARKERS = {
     "gate": "guardrail_gate",
     "isolation": "guardrail_isolation and not guardrail_isolation_capability",
     "proof": "guardrail_proof",
+    "proof-transition": "guardrail_proof_transition",
 }
 
 CAUGHT = "caught"
@@ -167,16 +169,16 @@ def run_marker(worktree: str, marker: str, timeout: float) -> subprocess.Complet
 
 
 def marker_for(patch: Path) -> str:
-    """The marker expression for *patch*, from its ``<family>-`` name prefix.
+    """The marker expression for *patch*, from its ``<family>-`` name prefix (the longest family that matches).
 
     Raises:
         MutationCheckError: When the prefix is not a known family.
     """
-    family = patch.name.split("-", 1)[0]
-    if family not in FAMILY_MARKERS or "-" not in patch.name:
+    families = [family for family in FAMILY_MARKERS if patch.name.startswith(family + "-")]
+    if not families:
         raise MutationCheckError(
             f"{patch.name}: name must start with one of {', '.join(f + '-' for f in FAMILY_MARKERS)}")
-    return FAMILY_MARKERS[family]
+    return FAMILY_MARKERS[max(families, key=len)]
 
 
 def check_mutation(repo: str, patch: Path, timeout: float) -> MutationResult:

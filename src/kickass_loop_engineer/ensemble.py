@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+from .verifier import still_fresh
+
 
 #: Auto temperature ladder for default (spec-less) ensembles: the first three
 #: attempts probe conservative -> creative, later attempts step up by 0.3 and
@@ -89,9 +91,12 @@ def select_winner(attempts: list) -> Optional[Attempt]:
     """Return the verified winner, or None if no attempt passes its gate.
 
     The winner is a passing attempt with the fewest files (simplest). Selection,
-    not merging — losing attempts are discarded, never stitched together.
+    not merging — losing attempts are discarded, never stitched together. A
+    pass bound to a candidate that has changed since its gate ran (see
+    ``verifier.still_fresh``) is stale and never selected.
     """
-    passing = [a for a in attempts if getattr(a.evidence, "passed", False)]
+    passing = [a for a in attempts
+               if getattr(a.evidence, "passed", False) and still_fresh(a.evidence, a.workspace)]
     if not passing:
         return None
     return min(passing, key=lambda a: a.file_count)

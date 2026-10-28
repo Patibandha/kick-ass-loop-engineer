@@ -39,6 +39,7 @@ from typing import Optional
 from .archmap import ARCHMAP_RELPATH
 from .gates import GATES
 from .guardrails import VerificationPolicy
+from .workspace import candidate_digest, digest_matches
 
 logger = logging.getLogger(__name__)
 
@@ -91,9 +92,21 @@ class ProofRecord:
         return self.green_before and self.red_when_reverted and self.green_after
 
 
+class _GateDidNotRun(RuntimeError):
+    """A proof run of the gate could not complete (rejected, not launched, timed out): neither red nor green."""
+
+
 def _gate_passes(gate_cmd: str, workspace: str, policy: VerificationPolicy) -> bool:
-    """Run an allowlisted gate; return True iff it exits zero."""
-    return policy.run(gate_cmd, cwd=workspace).passed
+    """Run an allowlisted gate; return True iff it exits zero.
+
+    Raises:
+        _GateDidNotRun: When the gate could not complete. A timeout with the change reverted is not the
+            gate turning red, so it must never count as proof.
+    """
+    result = policy.run(gate_cmd, cwd=workspace)
+    if result.error:
+        raise _GateDidNotRun(result.error)
+    return result.passed
 
 
 def _git(workspace: str, *args: str, timeout: float = 60.0) -> subprocess.CompletedProcess:
@@ -388,6 +401,9 @@ def prove(gate_cmd: str, workspace: str, policy: Optional[VerificationPolicy] = 
             # Only test-support files changed and the gate does not need them
             # (a marker-registration line in conftest.py): the tests-only waiver.
             record.skipped_reason = tests_only_reason
+    except _GateDidNotRun as exc:
+        record.red_when_reverted = record.green_after = False
+        record.error = f"gate could not run during the proof: {exc}"
     except subprocess.CalledProcessError as exc:
         record.error = f"git operation failed: {(exc.stderr or exc)}"
     except subprocess.TimeoutExpired as exc:
@@ -523,6 +539,10 @@ class GatesResult:
     """
 
     records: list = field(default_factory=list)
+    #: sha256 binding of the candidate the gates ran on (``workspace.candidate_digest``), taken by
+    #: ``run_gates`` after the last gate. ``""`` means the candidate could not be read, which no consumer
+    #: accepts; ``None`` means the result was not produced by ``run_gates`` and binds nothing.
+    candidate_digest: Optional[str] = None
 
     @property
     def passed(self) -> bool:
@@ -532,6 +552,30 @@ class GatesResult:
     def to_dict(self) -> dict:
         """Return a JSON-serializable ``{"passed": ..., "gates": [...]}``."""
         return {"passed": self.passed, "gates": [r.to_dict() for r in self.records]}
+
+
+def bound_digest(evidence) -> Optional[str]:
+    """The candidate binding a gate verdict carries, or None when it carries none."""
+    return getattr(evidence, "candidate_digest", None)
+
+
+def still_fresh(evidence, workspace: str) -> bool:
+    """Say whether *evidence* still describes the candidate in *workspace* (owner policy: fail closed).
+
+    Evidence from ``run_gates`` is bound to the candidate's bytes and write times when its gates ran. Any
+    change since, including a change written back to identical bytes, makes the verdict stale: it is never
+    reused, the candidate must be gated again. A candidate that cannot be read is stale too. Evidence that
+    binds nothing (not produced by ``run_gates``) is judged on ``passed`` alone by its consumer.
+    """
+    bound = bound_digest(evidence)
+    if bound is None:
+        return True
+    try:
+        current = candidate_digest(workspace)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("candidate in %s cannot be re-read; its gate verdict is stale: %s", workspace, exc)
+        return False
+    return digest_matches(bound, current)
 
 
 def _run_observer(command: str, workspace: str,
@@ -599,4 +643,12 @@ def run_gates(specs, workspace: str, policy: Optional[VerificationPolicy] = None
             if observe:
                 record.observed = _run_observer(observe, workspace, policy)
             break
+    if result.passed:
+        # Bind the verdict to the exact candidate it is about, AFTER the last gate (a proof's stash and pop
+        # rewrites the files). Consumers refuse the verdict once the candidate differs from this binding.
+        try:
+            result.candidate_digest = candidate_digest(workspace)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+            logger.warning("cannot bind the gate verdict in %s to its candidate: %s", workspace, exc)
+            result.candidate_digest = ""
     return result

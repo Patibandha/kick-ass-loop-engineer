@@ -88,15 +88,21 @@ def test_every_mutation_patch_applies_to_head():
             assert checked.returncode == 0, f"{patch.name} no longer applies: {checked.stderr.strip()}"
 
 
-def test_the_three_required_families_have_a_patch():
+def test_the_required_families_have_a_patch():
     names = [p.name for p in cm.find_patches(MUTATIONS)]
-    for family in ("gate-", "isolation-", "proof-"):
+    for family in ("gate-", "isolation-", "proof-", "proof-transition-"):
         assert any(n.startswith(family) for n in names), family
 
 
 def test_every_patch_name_maps_to_a_marker():
     for patch in cm.find_patches(MUTATIONS):
         assert cm.marker_for(patch).startswith("guardrail_")
+
+
+def test_the_longest_matching_family_picks_the_marker():
+    assert cm.marker_for(Path("proof-transition-skip-freshness.patch")) == "guardrail_proof_transition"
+    assert cm.marker_for(Path("proof-skip-revert.patch")) == "guardrail_proof"
+    assert cm.marker_for(Path("proof-transitional.patch")) == "guardrail_proof"
 
 
 def test_an_unknown_family_is_an_error():

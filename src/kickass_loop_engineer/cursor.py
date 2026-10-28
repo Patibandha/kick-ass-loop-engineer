@@ -1,7 +1,9 @@
 """Resumable pipeline cursor: pipeline.json + events.jsonl per stage transition.
 
 The cursor is the artifact the 2.0-M2 ``next`` protocol will read. Writes are
-atomic (tmp file + os.replace) so a crash never leaves a half-written cursor.
+atomic (exclusive tmp file + os.replace, refusing links) so a crash never leaves
+a half-written cursor, and a cursor that is torn or corrupt anyway loads as
+absent: a resume never reads it as progress, let alone success.
 Like the other run artifacts, the events log grows per transition; long-lived
 callers rotate it between runs.
 """
@@ -12,6 +14,8 @@ import logging
 import os
 from datetime import datetime, timezone
 from typing import Any, Optional
+
+from .workspace import append_line_unlinked, write_text_unlinked
 
 logger = logging.getLogger("kickass_loop_engineer.cursor")
 
@@ -108,22 +112,30 @@ class PipelineCursor:
         self._event(event, payload)
 
     def load(self) -> Optional[dict]:
-        """Return the persisted cursor, or None when absent/corrupt."""
+        """Return the persisted cursor, or None when absent, torn or corrupt.
+
+        Fail closed: bytes that are not UTF-8, JSON that does not parse, or a
+        cursor whose fields have the wrong shape all load as None, so a resume
+        starts over instead of skipping work on a record it cannot trust.
+        """
         try:
             with open(self.path, "r", encoding="utf-8") as handle:
                 data = json.load(handle)
-            self._state = data
-            return data
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
+        except FileNotFoundError:
             return None
+        except (ValueError, OSError) as exc:  # ValueError covers JSONDecodeError and UnicodeDecodeError
+            logger.warning("pipeline cursor %s is unreadable; treating it as absent: %s", self.path, exc)
+            return None
+        if not _well_formed(data):
+            logger.warning("pipeline cursor %s is malformed; treating it as absent", self.path)
+            return None
+        self._state = data
+        return data
 
     def _write(self) -> None:
-        os.makedirs(self.dir, exist_ok=True)
-        tmp = self.path + ".tmp"
         try:
-            with open(tmp, "w", encoding="utf-8") as handle:
-                json.dump(self._state, handle, indent=2)
-            os.replace(tmp, self.path)
+            os.makedirs(self.dir, exist_ok=True)
+            write_text_unlinked(self.path, json.dumps(self._state, indent=2))
         except OSError:
             logger.exception("could not persist pipeline cursor")
 
@@ -132,7 +144,23 @@ class PipelineCursor:
                 "run_id": self._state.get("run_id", ""), "event": event, "payload": payload}
         try:
             os.makedirs(self.dir, exist_ok=True)
-            with open(self.events_path, "a", encoding="utf-8") as handle:
-                handle.write(json.dumps(line) + "\n")
+            append_line_unlinked(self.events_path, json.dumps(line))
         except OSError:
             logger.exception("could not append pipeline event")
+
+
+def _well_formed(data: Any) -> bool:
+    """Say whether a loaded cursor has the shape ``start``/``set_stage`` write.
+
+    Only the keys resume and ``next`` act on are checked; any of them with the
+    wrong type makes the whole cursor untrustworthy.
+    """
+    if not isinstance(data, dict):
+        return False
+    for key in ("run_id", "objective_goal", "stage", "status"):
+        if not isinstance(data.get(key, ""), str):
+            return False
+    if not isinstance(data.get("detail", {}), dict):
+        return False
+    slices = data.get("completed_slices", [])
+    return isinstance(slices, list) and all(isinstance(role, str) for role in slices)

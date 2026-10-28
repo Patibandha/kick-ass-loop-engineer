@@ -14,7 +14,12 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "mutation_check: tests for scripts/check_mutations.py and the patches under mutations/",
+        "guardrail_proof_transition: a verdict changed between proof and use, torn run-state writes, and "
+        "gate launch failures after a valid proof",
+    )
+    config.addinivalue_line(
+        "markers",
+        "mutation_check:tests for scripts/check_mutations.py and the patches under mutations/",
     )
     config.addinivalue_line(
         "markers",
