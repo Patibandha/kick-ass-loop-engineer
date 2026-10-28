@@ -12,39 +12,11 @@ import subprocess
 import tempfile
 from typing import Generator, Optional
 
-from .workspace import contained
+from .workspace import changed_paths, contained
 
 
 class WorktreeError(Exception):
     """Raised when a git worktree operation fails."""
-
-
-def _changed_paths(folder: str) -> list:
-    """Every changed path in *folder*'s git checkout, as git spells it (a rename yields its new path).
-
-    Read NUL-separated and decoded as UTF-8, git's own encoding for paths. Decoding with the locale code page
-    (cp1252 on a default Windows) turned a non-ASCII name into one that does not exist, and that file was silently
-    neither seeded nor promoted. Names are never stripped: spaces are part of them.
-
-    Raises:
-        subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError: when git cannot report the status.
-    """
-    out = subprocess.run(
-        ["git", "-C", folder, "status", "--porcelain", "-z", "--untracked-files=all"],
-        check=True, capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=60,
-    ).stdout
-    fields = out.split("\0")
-    paths, index = [], 0
-    while index < len(fields):
-        entry = fields[index]
-        index += 1
-        if len(entry) < 4:
-            continue
-        paths.append(entry[3:])
-        # A rename or copy is followed by its source path in the next field; that path no longer holds the file.
-        if entry[0] in "RC" or entry[1] in "RC":
-            index += 1
-    return paths
 
 
 class WorktreeManager:
@@ -119,7 +91,7 @@ class WorktreeManager:
         against whatever state the worktree has.
         """
         try:
-            changed = _changed_paths(self._repo_root)
+            changed = changed_paths(self._repo_root)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
             return
         for rel in changed:
@@ -193,9 +165,8 @@ class WorktreeManager:
         worktree (tracked modifications and untracked additions, as reported
         by ``git status --porcelain``) are copied.  Run artifacts under
         ``.loop-engineer/`` are never promoted, and deletions are never
-        propagated.  Git-detected renames (porcelain ``R old -> new`` lines,
-        only possible for staged changes) are skipped rather than followed —
-        promotion is writes-only by design.
+        propagated.  A git-detected rename is promoted at its new path and the
+        old path is left in place — promotion is writes-only by design.
 
         Parameters
         ----------
@@ -219,7 +190,7 @@ class WorktreeManager:
         src = os.path.abspath(src_worktree)
         dest = os.path.abspath(dest_workspace)
         try:
-            changed = _changed_paths(src)
+            changed = changed_paths(src)
         except subprocess.CalledProcessError as exc:
             detail = (exc.stderr or "").strip() or str(exc)
             raise WorktreeError(f"could not read worktree status: {detail}") from exc

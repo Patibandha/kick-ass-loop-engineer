@@ -45,6 +45,33 @@ _GIT_TIMEOUT_SECONDS = 60
 _HASH_CHUNK_BYTES = 65536
 
 
+def changed_paths(folder: str) -> list:
+    """Every changed path in *folder*'s git checkout, as git spells it (a rename or copy yields its new path).
+
+    Read NUL-separated and decoded as UTF-8, git's own encoding for paths. Decoding with the locale code page
+    (cp1252 on a default Windows) turned a non-ASCII name into one that does not exist, so that file was silently
+    neither seeded, promoted nor fingerprinted. Names are never stripped: spaces are part of them.
+
+    Raises:
+        subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError: when git cannot report the status.
+    """
+    out = subprocess.run(
+        ["git", "-C", folder, "status", "--porcelain", "-z", "--untracked-files=all"],
+        check=True, capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=_GIT_TIMEOUT_SECONDS,
+    ).stdout
+    fields = out.split("\0")
+    paths, index = [], 0
+    while index < len(fields):
+        entry = fields[index]
+        index += 1
+        if len(entry) < 4:  # the trailing empty field
+            continue
+        paths.append(entry[3:])
+        # A rename or copy (staged or not) is followed by its source path, which no longer holds the file.
+        if entry[0] in "RC" or entry[1] in "RC":
+            index += 1
+    return paths
+
 
 def contained(root: str, target: str) -> bool:
     """Return True when *target* really lands inside *root*.
@@ -431,12 +458,8 @@ class Workspace:
         Raises:
             WorkspaceError: On a git failure of any kind.
         """
-        command = ["git", "-C", self.root, "-c", "core.quotepath=false",
-                   "status", "--porcelain", "--untracked-files=all"]
         try:
-            completed = subprocess.run(
-                command, check=True, capture_output=True, text=True,
-                timeout=_GIT_TIMEOUT_SECONDS)
+            changed = changed_paths(self.root)
         except subprocess.CalledProcessError as exc:
             detail = (exc.stderr or "").strip() or str(exc)
             raise WorkspaceError(
@@ -445,15 +468,8 @@ class Workspace:
             raise WorkspaceError(
                 f"could not read workspace status in {self.root!r}: {exc}") from exc
 
-        paths: list = []
-        for line in completed.stdout.splitlines():
-            rel = line[3:].strip().strip('"')
-            if " -> " in rel:  # a staged rename: the NEW path is the file on disk
-                rel = rel.split(" -> ", 1)[1].strip().strip('"')
-            if not rel or rel == ".loop-engineer" or rel.startswith(".loop-engineer/"):
-                continue
-            paths.append(rel)
-        return paths
+        return [rel for rel in changed
+                if rel and rel != ".loop-engineer" and not rel.startswith(".loop-engineer/")]
 
     @staticmethod
     def _digest(path: str) -> Optional[str]:
