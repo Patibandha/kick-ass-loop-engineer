@@ -7,7 +7,7 @@ import pytest
 
 
 def pytest_configure(config):
-    """Register the labelled markers (capability job kept out of the main isolation run; proof negatives)."""
+    """Register the labelled markers (capability job kept out of the main isolation run; proof negatives; CI)."""
     config.addinivalue_line(
         "markers",
         "guardrail_proof: proof-of-test negative tests (missing, forged, stale and cancelled proofs)",
@@ -15,6 +15,11 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "mutation_check: tests for scripts/check_mutations.py and the patches under mutations/",
+    )
+    config.addinivalue_line(
+        "markers",
+        "ci_workflow: tests for .github/workflows/ci.yml, the expected guardrail IDs and "
+        "scripts/check_expected_tests.py",
     )
     config.addinivalue_line(
         "markers",
