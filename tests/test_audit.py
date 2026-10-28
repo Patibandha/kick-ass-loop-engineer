@@ -340,6 +340,9 @@ def test_run_audit_writes_nothing_outside_loop_engineer(tmp_path):
                 continue
             for name in names:
                 full = os.path.join(base, name)
+                # git refreshes its own index when it reads status (seen on macOS); that is git, not the audit.
+                if os.path.relpath(full, repo) == os.path.join(".git", "index"):
+                    continue
                 with open(full, "rb") as handle:
                     seen[full] = (os.stat(full).st_mtime_ns, handle.read())
         return seen

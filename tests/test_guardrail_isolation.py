@@ -184,6 +184,20 @@ def test_write_through_a_directory_junction_is_refused(layout):
 
 
 @isolation
+def test_a_backslash_path_is_written_where_it_was_checked(layout):
+    """The check reads a backslash as a separator, so the write must land at that same path on every host."""
+    root, outside = layout
+    workspace = Workspace(root=str(root))
+
+    outcome = workspace.apply(_file_block("pkg\\sub\\mod.py"))
+
+    assert outcome.written == ["pkg/sub/mod.py"]
+    assert (root / "pkg" / "sub" / "mod.py").read_text(encoding="utf-8") == "payload\n"
+    assert _tree(root) == [os.path.join("pkg", "sub", "mod.py")]
+    assert _tree(outside) == []
+
+
+@isolation
 def test_write_through_a_nested_junction_with_backslashes_is_refused(layout):
     root, outside = layout
     (root / "pkg").mkdir()

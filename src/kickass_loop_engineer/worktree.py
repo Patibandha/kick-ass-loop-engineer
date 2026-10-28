@@ -19,6 +19,34 @@ class WorktreeError(Exception):
     """Raised when a git worktree operation fails."""
 
 
+def _changed_paths(folder: str) -> list:
+    """Every changed path in *folder*'s git checkout, as git spells it (a rename yields its new path).
+
+    Read NUL-separated and decoded as UTF-8, git's own encoding for paths. Decoding with the locale code page
+    (cp1252 on a default Windows) turned a non-ASCII name into one that does not exist, and that file was silently
+    neither seeded nor promoted. Names are never stripped: spaces are part of them.
+
+    Raises:
+        subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError: when git cannot report the status.
+    """
+    out = subprocess.run(
+        ["git", "-C", folder, "status", "--porcelain", "-z", "--untracked-files=all"],
+        check=True, capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=60,
+    ).stdout
+    fields = out.split("\0")
+    paths, index = [], 0
+    while index < len(fields):
+        entry = fields[index]
+        index += 1
+        if len(entry) < 4:
+            continue
+        paths.append(entry[3:])
+        # A rename or copy is followed by its source path in the next field; that path no longer holds the file.
+        if entry[0] in "RC" or entry[1] in "RC":
+            index += 1
+    return paths
+
+
 class WorktreeManager:
     """Creates and removes git worktrees rooted at *repo_root*.
 
@@ -91,15 +119,10 @@ class WorktreeManager:
         against whatever state the worktree has.
         """
         try:
-            out = subprocess.run(
-                ["git", "-C", self._repo_root, "-c", "core.quotepath=false",
-                 "status", "--porcelain", "--untracked-files=all"],
-                check=True, capture_output=True, text=True, timeout=60,
-            ).stdout
+            changed = _changed_paths(self._repo_root)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
             return
-        for line in out.splitlines():
-            rel = line[3:].strip().strip('"')
+        for rel in changed:
             if not rel or rel.startswith(".loop-engineer/") or rel == ".loop-engineer":
                 continue
             src_path = os.path.join(self._repo_root, rel)
@@ -196,11 +219,7 @@ class WorktreeManager:
         src = os.path.abspath(src_worktree)
         dest = os.path.abspath(dest_workspace)
         try:
-            out = subprocess.run(
-                ["git", "-C", src, "-c", "core.quotepath=false",
-                 "status", "--porcelain", "--untracked-files=all"],
-                check=True, capture_output=True, text=True, timeout=60,
-            ).stdout
+            changed = _changed_paths(src)
         except subprocess.CalledProcessError as exc:
             detail = (exc.stderr or "").strip() or str(exc)
             raise WorktreeError(f"could not read worktree status: {detail}") from exc
@@ -208,8 +227,7 @@ class WorktreeManager:
             raise WorktreeError(f"could not read worktree status: {exc}") from exc
 
         promoted: list[str] = []
-        for line in out.splitlines():
-            rel = line[3:].strip().strip('"')
+        for rel in changed:
             if not rel or rel.startswith(".loop-engineer/") or rel == ".loop-engineer":
                 continue
             src_path = os.path.join(src, rel)

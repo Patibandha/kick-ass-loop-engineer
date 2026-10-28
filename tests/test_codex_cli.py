@@ -49,10 +49,14 @@ class CodexCompleteTests(unittest.TestCase):
         self.assertEqual(fake.calls[0]["stdin"], "sys\n\nuser")
         self.assertEqual((result.text, result.model), ("an answer", "gpt-6-astra"))
 
-    def test_windows_sandbox_override_is_passed(self):
+    def test_windows_sandbox_override_is_passed_on_windows_only(self):
         fake = FakeCodex()
         self.run_complete(fake)
-        self.assertIn('windows.sandbox="unelevated"', fake.calls[0]["argv"])
+        # The override is a Windows-only codex setting; CI runs this on all three hosts.
+        if os.name == "nt":
+            self.assertIn('windows.sandbox="unelevated"', fake.calls[0]["argv"])
+        else:
+            self.assertNotIn('windows.sandbox="unelevated"', fake.calls[0]["argv"])
 
     def test_falls_back_to_stdout_when_no_last_message_file(self):
         fake = FakeCodex(answer=None, stdout="from stdout")

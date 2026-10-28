@@ -21,7 +21,9 @@ import os
 import posixpath
 import re
 import shlex
+import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -246,6 +248,9 @@ class VerificationPolicy:
         argv = _resolve_program(shlex.split(command), env, cwd)
         if argv is None:
             return VerificationResult(passed=False, command=command, error="verification tool not found")
+        # A fresh bytecode cache per run: Python matches __pycache__ by source mtime and size, so a
+        # same-size rewrite within one mtime tick would run stale bytecode and could pass a changed candidate.
+        env["PYTHONPYCACHEPREFIX"] = tempfile.mkdtemp(prefix="le-pycache-")
         try:
             completed = subprocess.run(
                 argv,
@@ -262,6 +267,8 @@ class VerificationPolicy:
             return VerificationResult(passed=False, command=command, error=f"timed out after {self.timeout_seconds:.0f}s")
         except OSError as exc:
             return VerificationResult(passed=False, command=command, error=f"failed to run: {exc}")
+        finally:
+            shutil.rmtree(env["PYTHONPYCACHEPREFIX"], ignore_errors=True)
 
         result = VerificationResult(
             passed=completed.returncode == 0,

@@ -35,9 +35,14 @@ EXISTING_TEST = "def test_existing():\n    assert True\n"
 
 @dataclass
 class CountingPolicy(VerificationPolicy):
-    """The real policy, counting how many times a gate command actually ran."""
+    """The real policy, counting how many times a gate command actually ran.
+
+    The evidence tail is long enough to keep the failing test's name: pytest's failure lines carry the temp
+    path, and a long one (CI runners) pushed the name out of the default 2000 characters.
+    """
 
     runs: int = 0
+    tail_chars: int = 20000
 
     def run(self, command, cwd, **kwargs):
         self.runs += 1
