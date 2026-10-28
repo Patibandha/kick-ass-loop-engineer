@@ -524,7 +524,7 @@ Full detail in [CHANGELOG.md](CHANGELOG.md). The short story:
 
 | Version | Milestone | What it added |
 |---|---|---|
-| **3.4.0** | Windows default gate, one-slice builds _(current)_ | The default gate uses `python` on Windows (`python3` is the Store stub there); `decompose: off` builds an objective as one slice; `^` and `%` are rejected in gate commands. |
+| **3.4.0** | Windows default gate, guardrails tested on three platforms _(current)_ | The default gate uses `python` on Windows (`python3` is the Store stub there); `decompose: off` builds an objective as one slice; `^` and `%` are rejected in gate commands; non-ASCII names are promoted on any code page; gates never run stale bytecode; CI on Ubuntu, macOS and Windows with mutation-checked guardrail tests. |
 | **3.3.1** | Gates run like the user's shell | Gate programs resolve on PATH (a bare `python` is the project venv, not the engine's base interpreter on Windows); src-layout Python projects test their own `src/`. |
 | **3.3.0** | Codex and Antigravity CLI builders | `codex_cli` and `agy_cli` subscription backends with kill-tree timeouts, a `gpt` family for the cross-model guard, and `qa`/`devops` floors the decision model cannot lower. |
 | **3.2.1** | Isolated reviewers, safer keys | `decision.api_key_keyring` reads the Jev key from the OS credential store at call time. Jev failures carry the provider's own error text. `reviewer.allow_same_family` is an opt-in, journaled waiver so Claude can review Claude, paired with isolated reviewers (`isolated`, `profile_dir`) whose context stays apart from the builders'. Installable as a Claude Code plugin. |

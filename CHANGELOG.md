@@ -18,9 +18,25 @@ come from version control.
 
 ---
 
-## 3.4.0 — Windows default gate, one-slice builds, ^ and % rejected (2026-10-22)
+## 3.4.0 — Windows default gate, one-slice builds, guardrails tested on three platforms (2026-10-28)
 
 ### Fixed
+- **Non-ASCII file names on Windows**: the worktree seeder, `promote`, the workspace fingerprint and proof-of-test
+  read `git status` with the locale code page, so on a default Windows (cp1252) a file such as `café.py` was
+  silently left out of a promotion, or a candidate holding one ended "not proven". Status is now read
+  NUL-separated as UTF-8 by one helper; names keep their spaces and a rename yields its new path.
+- **Stale bytecode could pass a gate**: Python matches `__pycache__` by source mtime and size, so a same-size
+  rewrite within one mtime tick (proof-of-test reverts and restores in quick succession) ran the old code. Every
+  gate run now gets a fresh `PYTHONPYCACHEPREFIX`, removed afterwards.
+- **A backslash path is written where it was checked**: `check_path` read `\` as a separator but the write used
+  the raw name, so on POSIX the file landed at a different path than the one judged. The path is normalized once.
+- **Gate evidence names the failing tests**: the 200-character tail often held only the end of an assertion
+  message (long temp paths on CI), so a stall could not say which test failed; cut-off `FAILED`/`ERROR` lines are
+  kept, capped.
+- **Proof-of-test reverts test-support files**: `conftest.py` and non-test modules under `tests/` could carry
+  product code that the proof never reverted. They are now reverted with the source; when only they turn the gate
+  red, the evidence and the cross-model review name them (`support_only`) for the reviewer to confirm. A
+  support-only change that stays green when reverted (a marker line) keeps the tests-only waiver.
 - **A tests-only change can pass proof-of-test**: the engine regenerates `docs/architecture.mermaid.md` at every
   promote, and proof counted it as a source change, so a run adding only tests ended "not proven" and blocked. The
   map is no longer reverted; a real source change beside it must still be proven.
@@ -54,6 +70,15 @@ come from version control.
   `python` on Windows and `python3` elsewhere (`gates.default_python`).
 
 ### Added
+- **Three-platform CI** (`.github/workflows/ci.yml`): Python 3.12 on Ubuntu, macOS and Windows with a read-only
+  token, no secrets and SHA-pinned actions. It runs the suite, the mutation check and
+  `scripts/check_expected_tests.py`, which fails the job when any guardrail test in
+  `tests/expected-guardrail-ids.txt` did not run and pass.
+- **Mutation check** (`scripts/check_mutations.py`, `mutations/*.patch`): each patch breaks one guardrail (gate,
+  isolation, proof) in a throwaway worktree and the marked guardrail tests must fail; the clean tree must pass.
+- **Guardrail negative tests**: `guardrail_gate`, `guardrail_isolation` and `guardrail_proof` markers cover gate
+  fail-open and allowlist matching, Windows path escapes and junctions, and missing, forged, stale and cancelled
+  proofs.
 - **`decompose: off`**: builds the whole objective as one slice, with no decompose call. Every slice is gated by the
   run's gates, so a gate that only passes on the finished change (a marker-scoped suite, a whole-suite fix) used to
   stall on the first partial slice.
