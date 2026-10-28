@@ -19,7 +19,7 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "mutation_check:tests for scripts/check_mutations.py and the patches under mutations/",
+        "mutation_check: tests for scripts/check_mutations.py and the patches under mutations/",
     )
     config.addinivalue_line(
         "markers",
