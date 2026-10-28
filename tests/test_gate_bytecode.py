@@ -37,3 +37,19 @@ def test_the_gate_leaves_no_bytecode_cache_behind(tmp_path):
 
     assert VerificationPolicy().run(f"{DEFAULT_GATE_CMD} -p no:cacheprovider", cwd=str(tmp_path)).passed
     assert not (tmp_path / "__pycache__").exists()
+
+
+def test_a_same_size_rewrite_of_a_test_module_is_graded_on_the_new_test(tmp_path):
+    _write(tmp_path / "answer.py", "def answer():\n    return 42\n")
+    test_module = tmp_path / "test_answer.py"
+    _write(test_module, "from answer import answer\n\n\ndef test_answer():\n    assert answer() == 42\n")
+    stamp = os.stat(test_module).st_mtime_ns
+    policy = VerificationPolicy()
+    gate = f"{DEFAULT_GATE_CMD} -p no:cacheprovider"
+
+    assert policy.run(gate, cwd=str(tmp_path)).passed
+
+    _write(test_module, "from answer import answer\n\n\ndef test_answer():\n    assert answer() == 41\n")
+    os.utime(test_module, ns=(stamp, stamp))
+
+    assert not policy.run(gate, cwd=str(tmp_path)).passed

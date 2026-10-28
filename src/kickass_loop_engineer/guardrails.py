@@ -250,8 +250,9 @@ class VerificationPolicy:
             return VerificationResult(passed=False, command=command, error="verification tool not found")
         # A fresh bytecode cache per run: Python matches __pycache__ by source mtime and size, so a
         # same-size rewrite within one mtime tick would run stale bytecode and could pass a changed candidate.
-        env["PYTHONPYCACHEPREFIX"] = tempfile.mkdtemp(prefix="le-pycache-")
+        pycache = None
         try:
+            pycache = env["PYTHONPYCACHEPREFIX"] = tempfile.mkdtemp(prefix="le-pycache-")
             completed = subprocess.run(
                 argv,
                 cwd=cwd,
@@ -268,7 +269,9 @@ class VerificationPolicy:
         except OSError as exc:
             return VerificationResult(passed=False, command=command, error=f"failed to run: {exc}")
         finally:
-            shutil.rmtree(env["PYTHONPYCACHEPREFIX"], ignore_errors=True)
+            # Only the folder made above: an inherited PYTHONPYCACHEPREFIX is never removed.
+            if pycache:
+                shutil.rmtree(pycache, ignore_errors=True)
 
         result = VerificationResult(
             passed=completed.returncode == 0,

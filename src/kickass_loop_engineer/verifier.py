@@ -98,8 +98,10 @@ def _gate_passes(gate_cmd: str, workspace: str, policy: VerificationPolicy) -> b
 
 def _git(workspace: str, *args: str, timeout: float = 60.0) -> subprocess.CompletedProcess:
     """Run a git subcommand in the workspace, raising on failure or timeout."""
-    return subprocess.run(["git", *args], cwd=workspace, capture_output=True,
-                          text=True, check=True, timeout=timeout)
+    # UTF-8 is git's own encoding for paths; the locale code page (cp1252 on a default Windows) garbled
+    # non-ASCII names, so a proof could not stash them and a real candidate ended "not proven".
+    return subprocess.run(["git", *args], cwd=workspace, capture_output=True, encoding="utf-8",
+                          errors="surrogateescape", check=True, timeout=timeout)
 
 
 def _is_engine_generated(path: str) -> bool:
@@ -190,7 +192,8 @@ def _changed_entries(workspace: str) -> list[tuple[str, str]]:
             continue
         code, changed = field_value[:2], field_value[3:]
         entries.append((code, changed))
-        if code[0] in ("R", "C") and position < len(fields):
+        # Staged (first column) or worktree (second column) rename/copy: both carry a source path.
+        if (code[0] in ("R", "C") or code[1] in ("R", "C")) and position < len(fields):
             entries.append((code, fields[position]))  # the rename/copy source
             position += 1
     return entries
@@ -451,6 +454,26 @@ class EvidenceRecord:
         return d
 
 
+#: The last characters of gate output kept as evidence, and the cap on each named failure line kept beside them.
+EVIDENCE_TAIL_CHARS = 200
+EVIDENCE_LINE_CHARS = 300
+EVIDENCE_MAX_NAMED = 5
+
+
+def _evidence_tail(output: str) -> str:
+    """The end of a gate's output, plus pytest's ``FAILED``/``ERROR`` lines that the end alone cut off.
+
+    The bare tail often holds only the end of an assertion message (long temp paths on CI fill it), so a stall
+    report could not say which test failed.
+    """
+    text = output.strip()
+    tail = text[-EVIDENCE_TAIL_CHARS:]
+    named = [line[:EVIDENCE_LINE_CHARS] for line in text.splitlines()
+             if line.startswith(("FAILED ", "ERROR "))][:EVIDENCE_MAX_NAMED]
+    missing = [line for line in named if line not in tail]
+    return "\n".join([*missing, tail]) if missing else tail
+
+
 def run_gate(name: str, command: str, workspace: str, with_proof: bool = False,
              policy: Optional[VerificationPolicy] = None, expect: str = "",
              min_count: Optional[int] = None) -> EvidenceRecord:
@@ -473,7 +496,7 @@ def run_gate(name: str, command: str, workspace: str, with_proof: bool = False,
     policy = policy or VerificationPolicy()
     expectation = {"expect": expect, "min_count": min_count} if expect else {}
     result = policy.run(command, cwd=workspace, **expectation)
-    evidence = f"exit={result.returncode}; {(result.stdout_tail or result.stderr_tail or '').strip()[-200:]}"
+    evidence = f"exit={result.returncode}; {_evidence_tail(result.stdout_tail or result.stderr_tail or '')}"
     if result.error:
         evidence = f"error: {result.error}"
     record = EvidenceRecord(gate=name, command=command, passed=result.passed, evidence=evidence)

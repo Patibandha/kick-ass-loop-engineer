@@ -78,3 +78,34 @@ def test_names_with_spaces_and_renames_are_promoted_at_their_real_path(tmp_path)
     assert (repo / " padded name.py").read_text(encoding="utf-8") == "PADDED = 1\n"
     assert (repo / "new_name.py").read_text(encoding="utf-8") == "RENAMED = 1\n"
     assert (repo / "old_name.py").exists()
+
+
+PROVE_CHILD = """
+import json, sys
+from kickass_loop_engineer.gates import DEFAULT_GATE_CMD
+from kickass_loop_engineer.verifier import prove
+record = prove(DEFAULT_GATE_CMD + " -p no:cacheprovider", sys.argv[1])
+print(json.dumps({"proven": record.proven, "error": record.error, "utf8": sys.flags.utf8_mode}))
+"""
+
+
+def test_a_non_ascii_source_file_is_proven_without_utf8_mode(tmp_path):
+    repo = tmp_path / "target"
+    repo.mkdir()
+    (repo / ".gitignore").write_text("__pycache__/\n*.pyc\n.pytest_cache/\n", encoding="utf-8")
+    (repo / "test_feature.py").write_text("from café import answer\n\n\ndef test_answer():\n"
+                                          "    assert answer() == 42\n", encoding="utf-8")
+    _git(repo, "init", "-q")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "red baseline")
+    (repo / NAME).write_text("def answer():\n    return 42\n", encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONUTF8"}
+    env["PYTHONPATH"] = SRC
+
+    done = subprocess.run([sys.executable, "-X", "utf8=0", "-c", PROVE_CHILD, str(repo)], env=env,
+                          capture_output=True, text=True, encoding="utf-8", check=True)
+    result = json.loads(done.stdout.strip().splitlines()[-1])
+
+    assert result["utf8"] == 0
+    assert result["proven"] is True, result["error"]
+    assert (repo / NAME).read_text(encoding="utf-8") == "def answer():\n    return 42\n"
