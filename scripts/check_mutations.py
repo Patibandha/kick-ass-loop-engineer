@@ -13,7 +13,8 @@ It then requires the unmutated ``HEAD`` to pass every marker it used. Exit statu
 mutation was caught and the clean run is green; 1 otherwise; 2 on a usage error. Standard library only.
 
 Families map to markers: ``gate-*`` -> ``guardrail_gate``, ``isolation-*`` -> ``guardrail_isolation``,
-``proof-*`` -> ``guardrail_proof`` and ``proof-transition-*`` -> ``guardrail_proof_transition`` (the longest
+``proof-*`` -> ``guardrail_proof``, ``proof-transition-*`` -> ``guardrail_proof_transition`` and
+``proof-authority-*`` -> ``guardrail_proof_authority`` (the longest
 matching family wins). The mutations are applied to the committed ``HEAD``, so commit (or
 otherwise record) the code under test before running the check. Nothing from the environment is printed.
 """
@@ -37,6 +38,7 @@ FAMILY_MARKERS = {
     "isolation": "guardrail_isolation and not guardrail_isolation_capability",
     "proof": "guardrail_proof",
     "proof-transition": "guardrail_proof_transition",
+    "proof-authority": "guardrail_proof_authority",
 }
 
 CAUGHT = "caught"

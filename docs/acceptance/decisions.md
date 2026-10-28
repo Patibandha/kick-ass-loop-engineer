@@ -61,3 +61,13 @@ Each is current behavior that looks unintended. Classified truthfully above and 
   paths, so a builder edit there is never seen or reverted. Run git with config isolation?
 - **Q8** `claude_code` defaults to `isolated: false` and no profile, so builder and reviewer load your plugins, skills,
   MCP servers and CLAUDE.md, and a non-isolated reviewer starts in the engine's cwd. Make isolation the default?
+
+## Proof authority findings
+
+Recorded by `tests/test_guardrail_proof_authority.py`; details in [proof-authority.md](proof-authority.md). Each fix
+goes into its own scoped project; nothing here changes engine behavior.
+
+- **CRITICAL FINDING PA-1** (attack A2): proof-of-test proves the gate depends on the source files being present, not
+  on their behavior. A test that only checks `impl.py` exists makes wrong code proven, selected and promoted.
+- **CRITICAL FINDING PA-2** (attacks B, D): gate writes are not confined to the worktree. The gate can write a success
+  `pipeline.json` into the main workspace that `next` trusts, and can write any file the engine's user can.

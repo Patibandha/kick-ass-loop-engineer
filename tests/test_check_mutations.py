@@ -102,6 +102,7 @@ def test_every_patch_name_maps_to_a_marker():
 def test_the_longest_matching_family_picks_the_marker():
     assert cm.marker_for(Path("proof-transition-skip-freshness.patch")) == "guardrail_proof_transition"
     assert cm.marker_for(Path("proof-skip-revert.patch")) == "guardrail_proof"
+    assert cm.marker_for(Path("proof-authority-x.patch")) == "guardrail_proof_authority"
     assert cm.marker_for(Path("proof-transitional.patch")) == "guardrail_proof"
 
 
