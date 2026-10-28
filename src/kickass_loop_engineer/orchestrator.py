@@ -45,7 +45,7 @@ from .reproduce import FIX_MODE_RULES, generate_repro, repro_check_command
 from .review import CrossModelReviewError, blocking_findings, write_slice_review
 from .session import BuildSession
 from .terminal import RunOutcome, TerminalState
-from .verifier import OBSERVER_CAP, EvidenceRecord, GatesResult, run_gates
+from .verifier import OBSERVER_CAP, EvidenceRecord, GatesResult, run_gates, support_only_note
 from .visual import visual_critique
 from .workspace import Workspace, write_text_unlinked
 from .worktree import WorktreeError
@@ -1115,6 +1115,9 @@ class Orchestrator:
             # The advisory VLM critique (gates already passed) appends to the
             # same findings stream — advisory input, never a verdict.
             snapshot = self._snapshot(winner.workspace, winner_files)
+            support_note = support_only_note(winner.evidence)
+            if support_note:
+                snapshot = f"{snapshot}\n\n{support_note}"
             # Honest journal context: a reviewer retry here belongs to THIS
             # slice's winner review — stamp the slice before the call.
             self._review_retry_context = {"stage": "review",
