@@ -71,3 +71,6 @@ goes into its own scoped project; nothing here changes engine behavior.
   on their behavior. A test that only checks `impl.py` exists makes wrong code proven, selected and promoted.
 - **CRITICAL FINDING PA-2** (attacks B, D): gate writes are not confined to the worktree. The gate can write a success
   `pipeline.json` into the main workspace that `next` trusts, and can write any file the engine's user can.
+  **Fixed on Windows** (2026-10-28): every gate runs as a low-integrity process that can write only inside its
+  worktree and a private temp folder (`confine.run_confined`); a failed confinement step fails the gate. **Open on
+  Linux and macOS**: there gates run unconfined, as the owner decided, and every gate's evidence says `unconfined`.

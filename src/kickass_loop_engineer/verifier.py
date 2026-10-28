@@ -515,6 +515,8 @@ def run_gate(name: str, command: str, workspace: str, with_proof: bool = False,
     evidence = f"exit={result.returncode}; {_evidence_tail(result.stdout_tail or result.stderr_tail or '')}"
     if result.error:
         evidence = f"error: {result.error}"
+    elif not result.confined:
+        evidence += "; unconfined"  # the host could not confine the gate's writes (PA-2)
     record = EvidenceRecord(gate=name, command=command, passed=result.passed, evidence=evidence)
     if with_proof and result.passed:
         record.proof = prove(command, workspace, policy)

@@ -25,8 +25,8 @@ EXPECTED = ROOT / "tests" / "expected-guardrail-ids.txt"
 SCRIPT = ROOT / "scripts" / "check_expected_tests.py"
 
 GUARDRAIL_EXPRESSION = (
-    "(guardrail_gate or guardrail_isolation or guardrail_proof or guardrail_proof_transition or guardrail_proof_authority)"
-    " and not guardrail_isolation_capability"
+    "(guardrail_gate or guardrail_isolation or guardrail_proof or guardrail_proof_transition or guardrail_proof_authority"
+    " or guardrail_gate_confinement) and not guardrail_isolation_capability"
 )
 OPERATING_SYSTEMS = {"ubuntu-latest", "macos-latest", "windows-latest"}
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -183,7 +183,8 @@ def test_expected_file_equals_the_collected_guardrail_tests():
 def test_expected_file_covers_every_guardrail_family():
     expected = EXPECTED.read_text(encoding="utf-8")
     for module in ("test_guardrail_gate.py", "test_guardrail_isolation.py", "test_guardrail_proof.py",
-                   "test_guardrail_proof_transition.py", "test_guardrail_proof_authority.py"):
+                   "test_guardrail_proof_transition.py", "test_guardrail_proof_authority.py",
+                   "test_gate_confinement.py"):
         assert f"tests/{module}::" in expected, module
 
 

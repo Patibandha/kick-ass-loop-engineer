@@ -19,6 +19,7 @@ import subprocess
 
 import pytest
 
+from kickass_loop_engineer import confine
 from kickass_loop_engineer.config import build_verification_policy, parse_gates
 from kickass_loop_engineer.gates import GateSpec
 from kickass_loop_engineer.guardrails import (
@@ -54,6 +55,7 @@ def spy(monkeypatch):
     """Replace ``subprocess.run`` with a recorder that reports success."""
     recorder = _SpyRun()
     monkeypatch.setattr(subprocess, "run", recorder)
+    monkeypatch.setattr(confine, "CONFINEMENT_AVAILABLE", False)  # the stub is the gate process
     return recorder
 
 
@@ -437,6 +439,7 @@ def test_a_process_that_cannot_complete_is_a_failure(failure, monkeypatch, works
     _install(bin_dir, "pytest")
     recorder = _SpyRun(raises=failure)
     monkeypatch.setattr(subprocess, "run", recorder)
+    monkeypatch.setattr(confine, "CONFINEMENT_AVAILABLE", False)  # the stub is the gate process
     result = VerificationPolicy(timeout_seconds=1).run("pytest -q", workspace)
     assert result.passed is False
     assert result.returncode is None
@@ -448,6 +451,7 @@ def test_a_process_that_cannot_complete_is_a_failure(failure, monkeypatch, works
 def test_a_non_zero_exit_is_a_failure(code, monkeypatch, workspace, bin_dir):
     _install(bin_dir, "pytest")
     monkeypatch.setattr(subprocess, "run", _SpyRun(returncode=code))
+    monkeypatch.setattr(confine, "CONFINEMENT_AVAILABLE", False)  # the stub is the gate process
     result = VerificationPolicy().run("pytest -q", workspace)
     assert result.passed is False and result.returncode == code
     assert run_gate("unit", "pytest -q", workspace).passed is False
@@ -456,6 +460,7 @@ def test_a_non_zero_exit_is_a_failure(code, monkeypatch, workspace, bin_dir):
 def test_a_zero_exit_that_misses_its_expected_output_is_a_failure(monkeypatch, workspace, bin_dir):
     _install(bin_dir, "pytest")
     monkeypatch.setattr(subprocess, "run", _SpyRun(stdout="no tests ran in 0.01s"))
+    monkeypatch.setattr(confine, "CONFINEMENT_AVAILABLE", False)  # the stub is the gate process
     result = VerificationPolicy().run("pytest -q", workspace, expect=r"(\d+) passed")
     assert result.passed is False
     assert "expected output matching" in result.error
@@ -464,6 +469,7 @@ def test_a_zero_exit_that_misses_its_expected_output_is_a_failure(monkeypatch, w
 def test_an_invalid_expectation_regex_is_a_failure_not_a_pass(monkeypatch, workspace, bin_dir):
     _install(bin_dir, "pytest")
     monkeypatch.setattr(subprocess, "run", _SpyRun(stdout="3 passed"))
+    monkeypatch.setattr(confine, "CONFINEMENT_AVAILABLE", False)  # the stub is the gate process
     result = VerificationPolicy().run("pytest -q", workspace, expect="(unclosed")
     assert result.passed is False and "not a valid regex" in result.error
 

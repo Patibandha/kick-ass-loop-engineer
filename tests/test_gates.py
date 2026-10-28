@@ -2,6 +2,7 @@
 import subprocess
 import unittest
 from unittest import mock
+from kickass_loop_engineer import confine
 from kickass_loop_engineer.gates import GATES, GateSpec, default_python, gate_categories
 from kickass_loop_engineer.guardrails import VerificationPolicy
 
@@ -80,7 +81,7 @@ class GateExpectationTests(unittest.TestCase):
         completed = subprocess.CompletedProcess(
             args=["python3"], returncode=returncode, stdout=stdout, stderr=stderr)
         with mock.patch("kickass_loop_engineer.guardrails.subprocess.run",
-                        return_value=completed):
+                        return_value=completed),                 mock.patch.object(confine, "CONFINEMENT_AVAILABLE", False):  # the stub is the gate process
             return VerificationPolicy().run(self.GATE, cwd=".", **expectation)
 
     def test_a_gate_with_no_expectation_still_passes_on_exit_zero(self):
@@ -170,7 +171,7 @@ class GateExpectationPlumbingTests(unittest.TestCase):
         completed = subprocess.CompletedProcess(
             args=["python3"], returncode=0, stdout="no tests ran in 0.04s", stderr="")
         with mock.patch("kickass_loop_engineer.guardrails.subprocess.run",
-                        return_value=completed):
+                        return_value=completed),                 mock.patch.object(confine, "CONFINEMENT_AVAILABLE", False):  # the stub is the gate process
             result = run_gates(specs, workspace=".")
         self.assertFalse(result.passed)
         self.assertIn("expected output", result.records[0].evidence)
@@ -182,6 +183,6 @@ class GateExpectationPlumbingTests(unittest.TestCase):
         completed = subprocess.CompletedProcess(
             args=["python3"], returncode=0, stdout="3216 passed in 41.54s", stderr="")
         with mock.patch("kickass_loop_engineer.guardrails.subprocess.run",
-                        return_value=completed):
+                        return_value=completed),                 mock.patch.object(confine, "CONFINEMENT_AVAILABLE", False):  # the stub is the gate process
             result = run_gates(specs, workspace=".")
         self.assertTrue(result.passed)

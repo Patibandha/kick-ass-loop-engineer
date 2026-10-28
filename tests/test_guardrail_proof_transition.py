@@ -26,7 +26,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from kickass_loop_engineer import guardrails, orchestrator
+from kickass_loop_engineer import confine, guardrails, orchestrator
 from kickass_loop_engineer import verifier as verifier_mod
 from kickass_loop_engineer.agents import Builder, Reviewer
 from kickass_loop_engineer.cursor import PipelineCursor
@@ -136,8 +136,10 @@ class ScriptedGate:
 
 def _script(monkeypatch, outcomes):
     gate = ScriptedGate(outcomes)
-    monkeypatch.setattr(guardrails, "subprocess",
-                        SimpleNamespace(run=gate.run, TimeoutExpired=subprocess.TimeoutExpired))
+    scripted = SimpleNamespace(run=gate.run, TimeoutExpired=subprocess.TimeoutExpired)
+    monkeypatch.setattr(guardrails, "subprocess", scripted)
+    monkeypatch.setattr(confine, "subprocess", scripted)  # the gate is launched here
+    monkeypatch.setattr(confine, "CONFINEMENT_AVAILABLE", False)
     return gate
 
 
