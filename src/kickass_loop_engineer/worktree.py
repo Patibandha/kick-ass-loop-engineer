@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 from typing import Generator, Optional
 
+from .workspace import changed_paths, contained
+
 
 class WorktreeError(Exception):
     """Raised when a git worktree operation fails."""
@@ -89,22 +91,17 @@ class WorktreeManager:
         against whatever state the worktree has.
         """
         try:
-            out = subprocess.run(
-                ["git", "-C", self._repo_root, "-c", "core.quotepath=false",
-                 "status", "--porcelain", "--untracked-files=all"],
-                check=True, capture_output=True, text=True, timeout=60,
-            ).stdout
+            changed = changed_paths(self._repo_root)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
             return
-        for line in out.splitlines():
-            rel = line[3:].strip().strip('"')
+        for rel in changed:
             if not rel or rel.startswith(".loop-engineer/") or rel == ".loop-engineer":
                 continue
             src_path = os.path.join(self._repo_root, rel)
             if os.path.islink(src_path) or not os.path.isfile(src_path):
                 continue
             target = os.path.abspath(os.path.join(worktree_path, rel))
-            if os.path.commonpath([worktree_path, target]) != worktree_path:
+            if not contained(worktree_path, target):
                 continue
             try:
                 os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -168,9 +165,8 @@ class WorktreeManager:
         worktree (tracked modifications and untracked additions, as reported
         by ``git status --porcelain``) are copied.  Run artifacts under
         ``.loop-engineer/`` are never promoted, and deletions are never
-        propagated.  Git-detected renames (porcelain ``R old -> new`` lines,
-        only possible for staged changes) are skipped rather than followed —
-        promotion is writes-only by design.
+        propagated.  A git-detected rename is promoted at its new path and the
+        old path is left in place — promotion is writes-only by design.
 
         Parameters
         ----------
@@ -194,11 +190,7 @@ class WorktreeManager:
         src = os.path.abspath(src_worktree)
         dest = os.path.abspath(dest_workspace)
         try:
-            out = subprocess.run(
-                ["git", "-C", src, "-c", "core.quotepath=false",
-                 "status", "--porcelain", "--untracked-files=all"],
-                check=True, capture_output=True, text=True, timeout=60,
-            ).stdout
+            changed = changed_paths(src)
         except subprocess.CalledProcessError as exc:
             detail = (exc.stderr or "").strip() or str(exc)
             raise WorktreeError(f"could not read worktree status: {detail}") from exc
@@ -206,8 +198,7 @@ class WorktreeManager:
             raise WorktreeError(f"could not read worktree status: {exc}") from exc
 
         promoted: list[str] = []
-        for line in out.splitlines():
-            rel = line[3:].strip().strip('"')
+        for rel in changed:
             if not rel or rel.startswith(".loop-engineer/") or rel == ".loop-engineer":
                 continue
             src_path = os.path.join(src, rel)
@@ -216,7 +207,8 @@ class WorktreeManager:
             if os.path.islink(src_path) or not os.path.isfile(src_path):
                 continue
             target = os.path.abspath(os.path.join(dest, rel))
-            if os.path.commonpath([dest, target]) != dest:
+            # Resolved through links: the user's workspace may hold a junction the worktree did not.
+            if not contained(dest, target):
                 raise WorktreeError(f"promotion path escapes workspace: {rel!r}")
             try:
                 os.makedirs(os.path.dirname(target), exist_ok=True)

@@ -20,6 +20,8 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
+from .workspace import write_text_unlinked
+
 logger = logging.getLogger("kickass_loop_engineer.state")
 
 _DIR = ".loop-engineer"
@@ -93,9 +95,7 @@ class RunState:
             logger.warning("legacy rounds.json is not a list; ignoring it")
             return []
         try:
-            with open(self.rounds_path, "w", encoding="utf-8") as handle:
-                for record in data:
-                    handle.write(json.dumps(record) + "\n")
+            write_text_unlinked(self.rounds_path, "".join(json.dumps(record) + "\n" for record in data))
         except OSError:
             logger.exception("could not migrate legacy rounds.json to jsonl")
             return data
@@ -153,7 +153,6 @@ class RunState:
         lines.append("")
         try:
             os.makedirs(self.dir, exist_ok=True)
-            with open(self.state_md, "w", encoding="utf-8") as handle:
-                handle.write("\n".join(lines))
+            write_text_unlinked(self.state_md, "\n".join(lines))
         except OSError:
             logger.exception("could not write STATE.md")

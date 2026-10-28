@@ -18,6 +18,96 @@ come from version control.
 
 ---
 
+## 3.4.0 — Windows default gate, one-slice builds, guardrails tested on three platforms (2026-10-28)
+
+### Fixed
+- **Non-ASCII file names on Windows**: the worktree seeder, `promote`, the workspace fingerprint and proof-of-test
+  read `git status` with the locale code page, so on a default Windows (cp1252) a file such as `café.py` was
+  silently left out of a promotion, or a candidate holding one ended "not proven". Status is now read
+  NUL-separated as UTF-8 by one helper; names keep their spaces and a rename yields its new path.
+- **Stale bytecode could pass a gate**: Python matches `__pycache__` by source mtime and size, so a same-size
+  rewrite within one mtime tick (proof-of-test reverts and restores in quick succession) ran the old code. Every
+  gate run now gets a fresh `PYTHONPYCACHEPREFIX`, removed afterwards.
+- **A backslash path is written where it was checked**: `check_path` read `\` as a separator but the write used
+  the raw name, so on POSIX the file landed at a different path than the one judged. The path is normalized once.
+- **Gate evidence names the failing tests**: the 200-character tail often held only the end of an assertion
+  message (long temp paths on CI), so a stall could not say which test failed; cut-off `FAILED`/`ERROR` lines are
+  kept, capped.
+- **Proof-of-test reverts test-support files**: `conftest.py` and non-test modules under `tests/` could carry
+  product code that the proof never reverted. They are now reverted with the source; when only they turn the gate
+  red, the evidence and the cross-model review name them (`support_only`) for the reviewer to confirm. A
+  support-only change that stays green when reverted (a marker line) keeps the tests-only waiver.
+- **A tests-only change can pass proof-of-test**: the engine regenerates `docs/architecture.mermaid.md` at every
+  promote, and proof counted it as a source change, so a run adding only tests ended "not proven" and blocked. The
+  map is no longer reverted; a real source change beside it must still be proven.
+- **Workspace isolation on Windows**: a write is checked against the workspace after resolving links, so a
+  junction or symlink inside the workspace can no longer carry it outside; backslash paths are judged the same on
+  every host; drive letters and alternate data streams (`:`) are refused.
+- **More Windows write escapes closed**: a path component ending in a dot or space (`.git./config`, which Windows
+  writes to `.git/config`) and reserved device names (`CON`, `nul.txt`, `COM1`…) are refused on every host; a write
+  is also judged by where it really lands, so a link or 8.3 short name aliasing `.git` is refused; `promote` resolves
+  links in the user's workspace before copying; engine writes to fixed names (`design.md`, `.importlinter`,
+  `STATE.md`, review records) refuse a link planted there. A file named with `:` is now refused on POSIX too.
+- **Capability tests run only in their own job**: `addopts` deselects `guardrail_isolation_capability`; run it with
+  `python -m pytest -q -m guardrail_isolation_capability`.
+- **A stalled run says why**: the outcome's evidence and each failing `gate_result` journal event now carry the
+  gate's output tail. A stall used to report only "no attempt passed its gate" after removing the attempts' worktrees.
+- **Gate output and environment carry no credentials**: secret-shaped text in journaled gate output is replaced
+  with `[REDACTED]` (`decision.redact.redact_text`), and any variable named `*API_KEY`, `*TOKEN`, `*SECRET` or
+  `*PASSWORD` is scrubbed from a gate's environment, not only the four named model keys. A gate that needs such a
+  variable must now get it another way.
+- **The test suite passes on Windows** (was 25 failures): fixtures are written byte-exact, path checks compare
+  the way the OS does, tests use the host's default gate, and `tests/conftest.py` puts the running interpreter's
+  folder first on PATH. New `tests/test_autocrlf.py` proves a change under `core.autocrlf`
+  true, false and input; the change comes back as git would check it out (converted endings when they do not
+  match the setting).
+- **`^` and `%` are shell metacharacters**: cmd.exe treats them as escape and variable expansion, and Windows runs
+  a `.cmd`/`.bat` gate shim through cmd.exe, so the gate allowlist now rejects both.
+- **`init --ui` and the interview** suggest the host's default gate (`python -m pytest -q` on Windows) instead of
+  `python3 -m pytest -q`.
+- **Default gate and reproduce check on Windows**: both were spelled `python3 -m pytest`, and on Windows `python3` is
+  the Microsoft Store stub, so an unconfigured gate or a fix-mode reproduce check could never pass. They now use
+  `python` on Windows and `python3` elsewhere (`gates.default_python`).
+
+### Added
+- **Three-platform CI** (`.github/workflows/ci.yml`): Python 3.12 on Ubuntu, macOS and Windows with a read-only
+  token, no secrets and SHA-pinned actions. It runs the suite, the mutation check and
+  `scripts/check_expected_tests.py`, which fails the job when any guardrail test in
+  `tests/expected-guardrail-ids.txt` did not run and pass.
+- **Mutation check** (`scripts/check_mutations.py`, `mutations/*.patch`): each patch breaks one guardrail (gate,
+  isolation, proof) in a throwaway worktree and the marked guardrail tests must fail; the clean tree must pass.
+- **Guardrail negative tests**: `guardrail_gate`, `guardrail_isolation` and `guardrail_proof` markers cover gate
+  fail-open and allowlist matching, Windows path escapes and junctions, and missing, forged, stale and cancelled
+  proofs.
+- **`decompose: off`**: builds the whole objective as one slice, with no decompose call. Every slice is gated by the
+  run's gates, so a gate that only passes on the finished change (a marker-scoped suite, a whole-suite fix) used to
+  stall on the first partial slice.
+
+## 3.3.1 — Gates run like the user's shell (2026-10-15)
+
+### Fixed
+- **Gate program lookup on Windows**: a bare gate command such as `python -m pytest` now resolves on the gate's
+  `PATH` like a shell would. Windows used to look in the engine's own folder first, so `python` ran the engine's base
+  interpreter (without the project's packages) and a passing suite reported as failing.
+- **src-layout projects test their own code**: when the workspace has `src/` beside `pyproject.toml`, `setup.py` or
+  `setup.cfg`, gates run with that `src/` first on `PYTHONPATH`. Attempt worktrees used to import the package from an
+  editable install that pointed at the main checkout, so proof-of-test could grade the wrong code.
+
+## 3.3.0 — Codex and Antigravity CLI backends, QA/DevOps floors (2026-10-13)
+
+### Added
+- **`codex_cli` provider**: OpenAI Codex headless (`codex exec`) on a ChatGPT subscription login. `complete`
+  runs in the read-only sandbox (a reviewer never edits); `edit` runs in `workspace-write` rooted at the
+  attempt's worktree. Prompt over stdin, final message from `-o`, `OPENAI_API_KEY` scrubbed so usage never
+  falls back to metered billing.
+- **`agy_cli` provider name**: the spec name for the existing Antigravity-backed `gemini` provider.
+- **Kill-tree CLI runner** (`providers/cli_process.run_cli`): a timeout kills the whole process tree, so an npm
+  `.cmd` shim on Windows can no longer leave the real CLI running and hang the loop.
+- **`gpt` model family**: `gpt`/`codex` names and o-series models are classified, so the cross-model guard can
+  pair Codex with Claude or Gemini and rejects Codex reviewing Codex.
+- **`decision.floors.qa` / `.devops`**: `run` keeps the QA and DevOps/ship stages staffed whatever the decision
+  model picks (default `auto`).
+
 ## 3.2.1 — keyring-sourced Jev key, isolated Claude reviewer, plugin marketplace (2026-10-02)
 
 ### Added

@@ -15,6 +15,7 @@ import pytest
 from kickass_loop_engineer import orchestrator
 from kickass_loop_engineer.agents import Builder, Reviewer
 from kickass_loop_engineer.ensemble import AttemptSpec, default_specs
+from kickass_loop_engineer.gates import DEFAULT_GATE_CMD
 from kickass_loop_engineer.ledger import CostLedger
 from kickass_loop_engineer.memory import Memory
 from kickass_loop_engineer.objective import Objective
@@ -131,7 +132,7 @@ def _make(tmp_path, *, builder, reviewer, notifier=None, ledger=None,
           pricing=None, architect_mode="off", diagram_validator=_VALID_DIAGRAMS,
           policy=None, visual_cfg=None, visual_provider=None, mode="build",
           attempt_specs=None, builder_factory=None, escalation_allow_tokens=(),
-          decision_settings=None, decision_chain=None):
+          decision_settings=None, decision_chain=None, decompose_mode="auto"):
     workspace = workspace or _ws(tmp_path)
     memory = memory or Memory(str(tmp_path / "mem.db"))
     cursor = cursor or PipelineCursor(workspace)
@@ -152,6 +153,7 @@ def _make(tmp_path, *, builder, reviewer, notifier=None, ledger=None,
         escalation_allow_tokens=escalation_allow_tokens,
         attempt_specs=attempt_specs, builder_factory=builder_factory,
         decision_settings=decision_settings, decision_chain=decision_chain,
+        decompose_mode=decompose_mode,
     )
     return orch
 
@@ -197,6 +199,52 @@ def test_terminal_cursor_detail_contains_outcome(tmp_path, monkeypatch):
     assert persisted["stage"] == "terminal"
     assert persisted["detail"]["outcome"]["state"] == "success"
     assert persisted["detail"]["outcome"]["evidence"], "evidence rides in the cursor"
+
+
+def test_a_stall_keeps_each_failed_gates_evidence(tmp_path, monkeypatch):
+    # Without it a stalled run says only "no attempt passed its gate", and the attempts' worktrees are gone.
+    monkeypatch.setattr(orchestrator, "run_gates", _fail_gates)
+    orch = _make(
+        tmp_path,
+        builder=Builder(FakeProvider(["not json", FILE_BLOCK, FILE_BLOCK])),
+        reviewer=Reviewer(FakeProvider(["NO FINDINGS"])),
+        ensemble_n=2,
+    )
+    outcome = orch.run()
+
+    assert outcome.state is TerminalState.STALLED
+    assert [e["evidence"] for e in outcome.evidence] == ["fail", "fail"]
+    with open(os.path.join(orch.workspace, ".loop-engineer", "events.jsonl"), encoding="utf-8") as fh:
+        gate_events = [json.loads(line)["payload"] for line in fh if '"gate_result"' in line]
+    assert [e["evidence"] for e in gate_events] == ["fail", "fail"]
+
+
+def test_secret_shaped_gate_output_is_redacted_before_it_is_kept(tmp_path, monkeypatch):
+    key = "sk-" + "a1B2c3D4e5F6g7H8i9J0"
+
+    def leaky_gates(specs, workspace, policy=None):
+        first = specs[0]
+        return GatesResult(records=[EvidenceRecord(gate=first.name, command=first.command, passed=False,
+                                                   evidence=f"exit=1; assert '{key}' == ''")])
+
+    monkeypatch.setattr(orchestrator, "run_gates", leaky_gates)
+    orch = _make(tmp_path, builder=Builder(FakeProvider(["not json", FILE_BLOCK])),
+                 reviewer=Reviewer(FakeProvider(["NO FINDINGS"])))
+    outcome = orch.run()
+
+    assert outcome.state is TerminalState.STALLED
+    with open(os.path.join(orch.workspace, ".loop-engineer", "events.jsonl"), encoding="utf-8") as fh:
+        journal = fh.read()
+    assert key not in json.dumps(outcome.evidence) and key not in journal
+    assert "[REDACTED]" in json.dumps(outcome.evidence)
+
+
+def test_an_observed_stall_still_keeps_the_failing_gate_output(tmp_path, monkeypatch):
+    orch, _builder, outcome = _stalled_with_observation(tmp_path, monkeypatch, "page snapshot")
+
+    assert outcome.state is TerminalState.STALLED
+    assert any("observed" in e for e in outcome.evidence)
+    assert any(e.get("gate") for e in outcome.evidence)
 
 
 def test_no_passing_attempt_is_stalled(tmp_path, monkeypatch):
@@ -778,6 +826,24 @@ def test_architect_off_never_runs_even_multi_slice(tmp_path, monkeypatch):
     assert not os.path.exists(os.path.join(workspace, "design.md"))
 
 
+def test_decompose_off_builds_the_whole_objective_as_one_slice(tmp_path, monkeypatch):
+    monkeypatch.setattr(orchestrator, "run_gates", _pass_gates)
+    builder = Builder(FakeProvider([FILE_BLOCK]))
+    orch = _make(
+        tmp_path, builder=builder,
+        reviewer=Reviewer(FakeProvider(["NO FINDINGS"])),
+        architect_mode="auto", decompose_mode="off",
+    )
+    outcome = orch.run()
+
+    assert outcome.state is TerminalState.SUCCESS
+    assert _decompose_prompts(builder.provider) == []
+    assert len(orch.worktrees.promoted) == 1
+    with open(os.path.join(orch.workspace, ".loop-engineer", "events.jsonl"), encoding="utf-8") as fh:
+        stages = [json.loads(line)["payload"] for line in fh if '"decompose"' in line]
+    assert stages and stages[0].get("mode") == "off"
+
+
 def test_architect_on_runs_for_single_slice(tmp_path, monkeypatch):
     monkeypatch.setattr(orchestrator, "run_gates", _pass_gates)
     workspace = _ws(tmp_path)
@@ -1308,7 +1374,7 @@ def test_no_observations_leaves_briefs_and_stall_unchanged(tmp_path, monkeypatch
     outcome = orch.run()
 
     assert outcome.state is TerminalState.STALLED
-    assert outcome.evidence == []
+    assert all("observed" not in e for e in outcome.evidence)
     prompts = [user for (_system, user) in builder.provider.calls]
     assert all("OBSERVED" not in p for p in prompts)
     assert orch._feedback == ""
@@ -1811,10 +1877,10 @@ def _fix_orch(tmp_path, workspace, responses):
         tmp_path, builder=builder,
         reviewer=Reviewer(FakeProvider(["NO FINDINGS"])),
         objective=Objective(goal=FIX_GOAL,
-                            done_when="python3 -m pytest -q passes"),
+                            done_when=f"{DEFAULT_GATE_CMD} passes"),
         workspace=workspace, cursor=PipelineCursor(workspace),
         worktrees=WorktreeManager(workspace, base_dir=str(tmp_path / "wts")),
-        gates=[GateSpec(name="unit", command="python3 -m pytest -q",
+        gates=[GateSpec(name="unit", command=DEFAULT_GATE_CMD,
                         prove=False)],
         mode="fix",
     )

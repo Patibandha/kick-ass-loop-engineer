@@ -51,7 +51,7 @@ from .terminal import RunOutcome, TerminalState
 from .workspace import Workspace, WorkspaceError, WriteOutcome
 from .worktree import WorktreeManager
 
-__version__ = "3.2.1"
+__version__ = "3.4.0"
 
 __all__ = [
     "Objective",

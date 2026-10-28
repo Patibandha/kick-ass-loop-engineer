@@ -28,8 +28,9 @@ from .autonomy import AutonomyLevel, ReadinessChecklist, resolve_level
 from .decision.broker import DecisionBroker
 from .decision.controller import StaffingController
 from .decision.log import DecisionLog
+from .decision.redact import redact_text
 from .decision.staffing import TESTS_CONSTRAINT
-from .decompose import generate_slices
+from .decompose import RoleSlice, generate_slices
 from .ensemble import default_specs, run_ensemble, select_winner
 from .escalation import should_escalate
 from .gates import GateSpec
@@ -44,9 +45,9 @@ from .reproduce import FIX_MODE_RULES, generate_repro, repro_check_command
 from .review import CrossModelReviewError, blocking_findings, write_slice_review
 from .session import BuildSession
 from .terminal import RunOutcome, TerminalState
-from .verifier import OBSERVER_CAP, EvidenceRecord, GatesResult, run_gates
+from .verifier import OBSERVER_CAP, EvidenceRecord, GatesResult, run_gates, support_only_note
 from .visual import visual_critique
-from .workspace import Workspace
+from .workspace import Workspace, write_text_unlinked
 from .worktree import WorktreeError
 
 logger = logging.getLogger("kickass_loop_engineer.orchestrator")
@@ -101,6 +102,14 @@ def _detect_python_package(workspace: str) -> str | None:
     return None
 
 
+def _failed_gate_evidence(attempts) -> list:
+    """Every attempt's failing gate records, as ``{"gate", "command", "evidence"}`` dicts."""
+    return [{"gate": rec.gate, "command": rec.command, "evidence": redact_text(rec.evidence)}
+            for attempt in attempts
+            for rec in getattr(attempt.evidence, "records", [])
+            if not rec.passed]
+
+
 def _failed_gate_names(attempts: list) -> list:
     """Return the sorted names of every gate that failed across *attempts*."""
     names = set()
@@ -132,6 +141,7 @@ class Orchestrator:
                  autonomy_requested=AutonomyLevel.L3, oscillation_window: int = 2,
                  policy=None, pricing=None, format_retries: int = 1,
                  architect_mode: str = "auto", diagram_validator=None,
+                 decompose_mode: str = "auto",
                  visual_cfg=None, visual_provider=None,
                  mode: str = "auto",
                  escalation_max_files: int = 10,
@@ -180,6 +190,8 @@ class Orchestrator:
             diagram_validator: Mermaid validation runner threaded to
                 ``architect.generate_design`` (``None`` selects the real
                 maid-backed default; tests inject a fake).
+            decompose_mode: ``"auto"`` (the builder splits the objective into
+                role slices) or ``"off"`` (one slice, no decompose call).
             visual_cfg: Optional mapping with ``screenshot_cmd`` — the
                 allowlisted command whose LAST whitespace token names the
                 screenshot it writes. Together with ``visual_provider`` this
@@ -254,6 +266,7 @@ class Orchestrator:
         self.pricing = pricing
         self.format_retries = format_retries
         self.architect_mode = architect_mode
+        self.decompose_mode = decompose_mode
         self.diagram_validator = diagram_validator
         self.visual_cfg = visual_cfg
         self.visual_provider = visual_provider
@@ -579,7 +592,14 @@ class Orchestrator:
             return False
 
     def _decompose(self, design_md: str) -> list:
-        """Run the ledgered decompose call (against *design_md* when non-empty)."""
+        """Run the ledgered decompose call (against *design_md* when non-empty).
+
+        With ``decompose_mode == "off"`` there is no call: the whole objective is one slice.
+        """
+        if self.decompose_mode == "off":
+            slices = [RoleSlice(role="build", objective=self.objective.goal)]
+            self.cursor.set_stage("decompose", "done", {"slices": ["build"], "mode": "off"})
+            return slices
         slices = generate_slices(
             self.objective, self.builder, design_md=design_md,
             on_usage=lambda r: self._record_cost("decompose", r))
@@ -646,8 +666,7 @@ class Orchestrator:
         self._record_cost("architect", result)
         path = os.path.join(self.workspace, "design.md")
         try:
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(design.markdown)
+            write_text_unlinked(path, design.markdown)
         except OSError as exc:
             # Degraded, not fatal: the in-memory design still drives the
             # re-decompose and the conformance gate; a later resume simply
@@ -699,8 +718,7 @@ class Orchestrator:
                 "usable layers or forbidden imports")
             return
         path = os.path.join(self.workspace, ".importlinter")
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(ini)
+        write_text_unlinked(path, ini)
         self._importlinter_ini = ini
         self.gates.append(GateSpec(name="architecture", command="lint-imports",
                                    prove=False))
@@ -732,8 +750,7 @@ class Orchestrator:
             "promoted .importlinter differed from the engine-rendered "
             "conformance contract (builder tampering?); restoring %s", path)
         try:
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(self._importlinter_ini)
+            write_text_unlinked(path, self._importlinter_ini)
         except OSError as exc:
             logger.error("could not restore %s: %s", path, exc)
 
@@ -1068,8 +1085,9 @@ class Orchestrator:
                     self._feedback_entries.append(observed)
                     self._feedback = "\n\n".join(self._feedback_entries)
                     return RunOutcome(TerminalState.STALLED, reason,
-                                      evidence=[{"observed": observed}])
-                return RunOutcome(TerminalState.STALLED, reason)
+                                      evidence=[{"observed": observed}, *_failed_gate_evidence(attempts)])
+                # The attempts' worktrees are gone: their failing gate output is all that explains the stall.
+                return RunOutcome(TerminalState.STALLED, reason, evidence=_failed_gate_evidence(attempts))
 
             self._losing_attempts += len(attempts) - 1
             winner_files = attempt_files.get(winner.workspace, [])
@@ -1097,6 +1115,9 @@ class Orchestrator:
             # The advisory VLM critique (gates already passed) appends to the
             # same findings stream — advisory input, never a verdict.
             snapshot = self._snapshot(winner.workspace, winner_files)
+            support_note = support_only_note(winner.evidence)
+            if support_note:
+                snapshot = f"{snapshot}\n\n{support_note}"
             # Honest journal context: a reviewer retry here belongs to THIS
             # slice's winner review — stamp the slice before the call.
             self._review_retry_context = {"stage": "review",
@@ -1226,11 +1247,14 @@ class Orchestrator:
         """
         for rec in getattr(gates_result, "records", []):
             proof = getattr(rec, "proof", None)
-            self.cursor.emit("gate_result", {
+            payload = {
                 "slice": slice_role, "attempt": attempt,
                 "gate": rec.gate, "ok": rec.passed,
                 "proven": proof.proven if proof is not None else None,
-            })
+            }
+            if not rec.passed:
+                payload["evidence"] = redact_text(rec.evidence)
+            self.cursor.emit("gate_result", payload)
             observed = getattr(rec, "observed", "")
             if not rec.passed and observed:
                 self.cursor.emit("observer_ran", {

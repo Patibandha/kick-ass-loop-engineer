@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kick-ass-loop-engineer"
-version = "3.2.1"
+version = "3.4.0"
 description = "kickAssLoopEngineer — autonomous loop-engineering build/verify/review loop, governed."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -29,4 +29,13 @@ Issues = "https://github.com/Patibandha/kick-ass-loop-engineer/issues"
 packages = ["src/kickass_loop_engineer"]
 
 [tool.pytest.ini_options]
-markers = ["slow: long-running integration tests"]
+# Capability cases (symlinks may need privilege) run only in their own labelled job:
+#   python -m pytest -q -m guardrail_isolation_capability
+pythonpath = ["src"]
+addopts = "-m 'not guardrail_isolation_capability'"
+markers = [
+    "slow: long-running integration tests",
+    "guardrail_gate: gate fail-open and allowlist-matching tests",
+    "guardrail_isolation: workspace-isolation negative tests (Windows path forms, junctions)",
+    "mutation_check: tests for scripts/check_mutations.py and the patches under mutations/",
+]

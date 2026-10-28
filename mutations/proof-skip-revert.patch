@@ -1,0 +1,13 @@
+diff --git a/src/kickass_loop_engineer/verifier.py b/src/kickass_loop_engineer/verifier.py
+index dccedc8..03cc003 100644
+--- a/src/kickass_loop_engineer/verifier.py
++++ b/src/kickass_loop_engineer/verifier.py
+@@ -360,7 +360,7 @@ def prove(gate_cmd: str, workspace: str, policy: Optional[VerificationPolicy] =
+             stashed = to_revert
+             _git(workspace, "stash", "push", "--include-untracked", "--", *to_revert)
+         try:
+-            record.red_when_reverted = not _gate_passes(gate_cmd, workspace, policy)
++            record.red_when_reverted = True
+             if record.red_when_reverted and not non_test:
+                 record.support_only = list(support)
+         finally:

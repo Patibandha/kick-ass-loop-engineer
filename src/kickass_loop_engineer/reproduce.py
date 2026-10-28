@@ -21,6 +21,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+from .gates import default_python
 from .guardrails import VerificationPolicy
 from .workspace import Workspace
 
@@ -95,7 +96,7 @@ def repro_check_command(rel_path: str) -> str:
     a builder-written conftest that skip-marks ``test_repro_*`` would make a
     red repro exit 0 (skipped tests pass) at both the RED check and the
     proving gate. The command still starts with the allowlisted
-    ``python3 -m pytest`` prefix, so no guardrail changes are needed.
+    ``python -m pytest`` (Windows) or ``python3 -m pytest`` prefix, so no guardrail changes are needed.
 
     Args:
         rel_path: Workspace-relative repro test path.
@@ -103,7 +104,7 @@ def repro_check_command(rel_path: str) -> str:
     Returns:
         The command string used by the RED check AND the appended GateSpec.
     """
-    return f"python3 -m pytest {rel_path} -q --noconftest -o addopts="
+    return f"{default_python()} -m pytest {rel_path} -q --noconftest -o addopts="
 
 
 def slugify(text: str, max_length: int = _SLUG_MAX_LENGTH) -> str:

@@ -369,6 +369,8 @@ template. The pipeline runs with sane defaults even if you delete the optional s
 | `openai_compat` | **Any** OpenAI `/chat/completions` endpoint — ChatGPT, Gemini (OpenAI layer), Grok, DeepSeek, Mistral, Qwen, OpenRouter, Groq, Together, and local runtimes (llama.cpp, LM Studio, vLLM) | Vendor pay-as-you-go / free local |
 | `anthropic` | Anthropic Messages API | Pay-as-you-go API |
 | `claude_code` | Headless Claude Code (`claude -p`) | Subscription credit |
+| `codex_cli` | Headless OpenAI Codex (`codex exec`), family `gpt` | ChatGPT subscription |
+| `agy_cli` (alias `gemini`) | Headless Antigravity (`agy -p`), family `gemini` | Google AI subscription |
 
 For `openai_compat`, only `base_url`, `model`, and `api_key_env` (the env-var *name*) change —
 e.g. OpenAI `https://api.openai.com/v1`, Gemini `https://generativelanguage.googleapis.com/v1beta/openai`,
@@ -522,7 +524,10 @@ Full detail in [CHANGELOG.md](CHANGELOG.md). The short story:
 
 | Version | Milestone | What it added |
 |---|---|---|
-| **3.2.1** | Isolated reviewers, safer keys _(current)_ | `decision.api_key_keyring` reads the Jev key from the OS credential store at call time. Jev failures carry the provider's own error text. `reviewer.allow_same_family` is an opt-in, journaled waiver so Claude can review Claude, paired with isolated reviewers (`isolated`, `profile_dir`) whose context stays apart from the builders'. Installable as a Claude Code plugin. |
+| **3.4.0** | Windows default gate, guardrails tested on three platforms _(current)_ | The default gate uses `python` on Windows (`python3` is the Store stub there); `decompose: off` builds an objective as one slice; `^` and `%` are rejected in gate commands; non-ASCII names are promoted on any code page; gates never run stale bytecode; CI on Ubuntu, macOS and Windows with mutation-checked guardrail tests. |
+| **3.3.1** | Gates run like the user's shell | Gate programs resolve on PATH (a bare `python` is the project venv, not the engine's base interpreter on Windows); src-layout Python projects test their own `src/`. |
+| **3.3.0** | Codex and Antigravity CLI builders | `codex_cli` and `agy_cli` subscription backends with kill-tree timeouts, a `gpt` family for the cross-model guard, and `qa`/`devops` floors the decision model cannot lower. |
+| **3.2.1** | Isolated reviewers, safer keys | `decision.api_key_keyring` reads the Jev key from the OS credential store at call time. Jev failures carry the provider's own error text. `reviewer.allow_same_family` is an opt-in, journaled waiver so Claude can review Claude, paired with isolated reviewers (`isolated`, `profile_dir`) whose context stays apart from the builders'. Installable as a Claude Code plugin. |
 | **3.2.0** | Jev staffing controller | A decision model sizes each run above deterministic quality floors: risk tier, security depth L1–L4, QA/DevOps on/off, review depth, tests, architect, attempts and model tier per slice, and stall recovery. Adds a cheap→strong tier cascade, human sign-off for chosen domains, a decision journal replayed on resume, and TypeSafe or Cloudflare (zero-retention) routes. |
 | `3.1.x` | Agentic builders | In-place `claude_code`/`gemini` builders, transient retry, `escalation.allow_tokens`, un-commit before harvest, additive proof-of-test, gate `expect`/`min_count`, blocking review severities. |
 | **3.0.0** | Any model, verifiable everywhere | Native `openai_compat` provider (any OpenAI-compatible endpoint), design-first architect stage + architecture-conformance gates, `ui` gates with a failure observer, brownfield task modes (`build`/`enhance`/`fix`/`audit`), diverse ensembles, and the run journal — over `uvx`, with a real proof-of-test demo. |
