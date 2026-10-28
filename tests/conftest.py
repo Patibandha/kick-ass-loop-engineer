@@ -32,6 +32,11 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
+        "audit_monitor: tests for the diagnostic audit monitor (tests/audit_monitor.py, "
+        "scripts/compare_audit.py); never guardrail evidence",
+    )
+    config.addinivalue_line(
+        "markers",
         "guardrail_isolation_capability: isolation cases needing a host capability (symlinks); "
         "capability missing is reported only under this marker",
     )
