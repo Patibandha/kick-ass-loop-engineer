@@ -13,6 +13,8 @@ import logging
 import os
 from dataclasses import dataclass
 
+from .workspace import write_text_unlinked
+
 logger = logging.getLogger("kickass_loop_engineer.ledger")
 
 
@@ -48,8 +50,7 @@ class CostLedger:
     def _save(self) -> None:
         try:
             os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
-            with open(self.path, "w", encoding="utf-8") as handle:
-                json.dump({"months": self._months}, handle, indent=2)
+            write_text_unlinked(self.path, json.dumps({"months": self._months}, indent=2))
         except OSError as exc:
             logger.warning("could not persist ledger: %s", exc)
 

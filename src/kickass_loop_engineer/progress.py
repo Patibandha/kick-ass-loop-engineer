@@ -19,6 +19,8 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Optional, TextIO
 
+from .workspace import append_line_unlinked
+
 logger = logging.getLogger("kickass_loop_engineer.progress")
 
 _BAR_WIDTH = 20
@@ -91,8 +93,7 @@ class ProgressReporter:
             return
         try:
             os.makedirs(os.path.dirname(self.events_path) or ".", exist_ok=True)
-            with open(self.events_path, "a", encoding="utf-8") as handle:
-                handle.write(json.dumps(asdict(event)) + "\n")
+            append_line_unlinked(self.events_path, json.dumps(asdict(event)))
         except OSError:
             logger.exception("could not append progress event")
 
