@@ -23,6 +23,10 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
+        "proof_binding: tests for docs/acceptance/proof-binding.md, authority-map.md and decisions.md",
+    )
+    config.addinivalue_line(
+        "markers",
         "guardrail_isolation_capability: isolation cases needing a host capability (symlinks); "
         "capability missing is reported only under this marker",
     )
