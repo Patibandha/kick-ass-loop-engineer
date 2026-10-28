@@ -17,7 +17,7 @@ Standard library only. Nothing from the environment is printed.
 The expected file is regenerated from the collected tests (sorted, one per line) with::
 
     python -m pytest --collect-only -q -p no:cacheprovider \\
-        -m "(guardrail_gate or guardrail_isolation or guardrail_proof or guardrail_proof_transition) and not guardrail_isolation_capability"
+        -m "(guardrail_gate or guardrail_isolation or guardrail_proof or guardrail_proof_transition or guardrail_proof_authority) and not guardrail_isolation_capability"
 """
 
 from __future__ import annotations

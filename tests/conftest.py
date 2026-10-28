@@ -19,6 +19,11 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
+        "guardrail_proof_authority: attacks by code running as the gate on the proof and run state "
+        "(docs/acceptance/proof-authority.md)",
+    )
+    config.addinivalue_line(
+        "markers",
         "mutation_check: tests for scripts/check_mutations.py and the patches under mutations/",
     )
     config.addinivalue_line(
