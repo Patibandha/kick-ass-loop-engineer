@@ -1,6 +1,6 @@
 # tests/test_notify.py
 """Tests for the notify hook."""
-import json, os, tempfile, unittest
+import json, os, sys, tempfile, unittest
 from kickass_loop_engineer.notify import Notifier, build_event
 
 
@@ -14,7 +14,9 @@ class NotifyTests(unittest.TestCase):
 
     def test_command_hook_receives_event_json(self):
         out = os.path.join(tempfile.mkdtemp(), "got.json")
-        n = Notifier(command=f"cat > {out}")
+        # The running interpreter, not `cat`: a plain Windows shell (cmd.exe) has no cat.
+        sink = "import sys; open(sys.argv[1], 'w').write(sys.stdin.read())"
+        n = Notifier(command=f'"{sys.executable}" -c "{sink}" "{out}"')
         ok = n.notify(build_event("r1", "verify", "terminal", "info", {"state": "success"}))
         self.assertTrue(ok)
         with open(out) as f:
