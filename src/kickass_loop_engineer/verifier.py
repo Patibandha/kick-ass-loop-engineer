@@ -569,6 +569,8 @@ def still_fresh(evidence, workspace: str) -> bool:
     """
     bound = bound_digest(evidence)
     if bound is None:
+        # shortcut: unbound evidence counts as fresh because test fakes build it; run_gates always binds a digest,
+        # so no production pass is unbound. Upgrade to `return False` once the gate fakes bind digests.
         return True
     try:
         current = candidate_digest(workspace)

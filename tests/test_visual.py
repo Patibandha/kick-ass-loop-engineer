@@ -154,3 +154,19 @@ def test_on_usage_failure_never_escapes(tmp_path, caplog):
                                    "obj", on_usage=boom)
     assert findings == []
     assert any("ledger exploded" in r.message for r in caplog.records)
+
+
+def test_a_screenshot_inside_the_workspace_is_removed_after_the_critique(tmp_path):
+    # Left in an attempt worktree it changes the gated candidate, and promotion refuses the winner as stale.
+    ws = _workspace(tmp_path)
+    visual_critique(CMD, ws, FakePolicy(), FakeVisionProvider(text="NO FINDINGS"), "obj")
+    assert not os.path.exists(os.path.join(ws, "shot.png"))
+
+
+def test_a_screenshot_written_outside_the_workspace_is_left_alone(tmp_path):
+    ws = _workspace(tmp_path, shot=None)
+    shot = tmp_path / "elsewhere.png"
+    shot.write_bytes(b"png")
+    visual_critique(f"npx playwright-cli screenshot http://localhost:3000 {shot}", ws, FakePolicy(),
+                    FakeVisionProvider(text="NO FINDINGS"), "obj")
+    assert shot.exists()
