@@ -155,6 +155,7 @@ tests/test_guardrail_gate.py::test_the_documented_acceptance_rule[pytest]
 tests/test_guardrail_gate.py::test_the_documented_acceptance_rule[python -m pytest -q]
 tests/test_guardrail_gate.py::test_the_documented_acceptance_rule[python -m unittest]
 tests/test_guardrail_gate.py::test_the_documented_acceptance_rule[python3 -m pytest -q]
+tests/test_guardrail_isolation.py::test_a_backslash_path_is_written_where_it_was_checked
 tests/test_guardrail_isolation.py::test_a_hostile_path_does_not_stop_a_clean_sibling_block
 tests/test_guardrail_isolation.py::test_a_link_inside_the_workspace_cannot_reach_a_protected_folder
 tests/test_guardrail_isolation.py::test_a_name_that_only_starts_like_a_device_is_accepted[auxiliary/x.py]

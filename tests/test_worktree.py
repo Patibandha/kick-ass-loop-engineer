@@ -18,8 +18,9 @@ def _repo():
 
 
 def _same_path(path):
-    """Compare paths the way the OS does: on Windows git prints forward slashes where Python has backslashes."""
-    return os.path.normcase(os.path.normpath(path))
+    """Compare paths the way the OS does: git prints forward slashes where Windows has backslashes, and resolved
+    paths where the temp folder is a link (macOS /var -> /private/var) or an 8.3 short name (Windows RUNNER~1)."""
+    return os.path.normcase(os.path.realpath(path))
 
 
 def _listed_worktrees(repo):

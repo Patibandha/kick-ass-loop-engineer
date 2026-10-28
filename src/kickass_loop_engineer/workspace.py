@@ -180,17 +180,20 @@ class Workspace:
             outcome.rejected.append(("(extra files)", "exceeded max files per round"))
 
         for item in parsed:
-            ok, reason = self.policy.check_path(item.path)
+            # One spelling for the check, the containment test and the write: check_path reads a backslash as
+            # a separator, so the write must too, or POSIX would write a different path than the one judged.
+            path = item.path.replace("\\", "/")
+            ok, reason = self.policy.check_path(path)
             if not ok:
                 logger.warning("rejected %s: %s", item.path, reason)
                 outcome.rejected.append((item.path, reason))
                 continue
-            ok, reason = self.policy.check_content(item.path, item.content)
+            ok, reason = self.policy.check_content(path, item.content)
             if not ok:
                 outcome.rejected.append((item.path, reason))
                 continue
 
-            target = os.path.abspath(os.path.join(self.root, item.path))
+            target = os.path.abspath(os.path.join(self.root, path))
             if not contained(self.root, target):
                 outcome.rejected.append((item.path, "resolves outside workspace"))
                 continue
@@ -213,8 +216,8 @@ class Workspace:
                 outcome.rejected.append((item.path, f"write error: {exc}"))
                 continue
 
-            self.written.add(item.path)
-            outcome.written.append(item.path)
+            self.written.add(path)
+            outcome.written.append(path)
         return outcome
 
     def fingerprint(self) -> dict:
