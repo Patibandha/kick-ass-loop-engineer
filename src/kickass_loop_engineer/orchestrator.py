@@ -1339,9 +1339,34 @@ class Orchestrator:
         return "\n\n".join(parts)
 
     def _remove_attempts(self, attempts: list) -> None:
-        """Remove every attempt's worktree (winner and losers alike)."""
+        """Remove every attempt's worktree (winner and losers alike), keeping each one's changes as a patch."""
         for attempt in attempts:
+            self._keep_attempt_patch(attempt.workspace)
             self.worktrees.remove(attempt.workspace)
+
+    def _keep_attempt_patch(self, path: str) -> None:
+        """Save an attempt's changes to ``.loop-engineer/attempts/<run>-<attempt>.patch`` before its worktree goes.
+
+        A stalled or blocked run used to lose all of its work with the worktree. Best effort: a failure is logged
+        and never stops the run. Apply a kept patch with ``git apply``.
+        """
+        try:
+            subprocess.run(["git", "-C", path, "add", "-A"], check=True, capture_output=True, timeout=60)
+            diff = subprocess.run(["git", "-C", path, "diff", "--cached", "--binary"], check=True,
+                                  capture_output=True, timeout=60).stdout
+            if not diff:
+                return
+            name = f"{self.run_id or 'run'}-{os.path.basename(os.path.normpath(path))}.patch"
+            target = os.path.join(self.workspace, ".loop-engineer", "attempts", name)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            if os.path.islink(target):
+                raise OSError(f"refusing to write through a link: {target}")
+            # Bytes, not text: newline translation on Windows would make the patch unappliable.
+            with open(target, "wb") as handle:
+                handle.write(diff)
+            logger.info("kept attempt changes in %s", target)
+        except (subprocess.SubprocessError, OSError) as exc:
+            logger.warning("could not keep the changes of attempt %s: %s", path, exc)
 
     def _cleanup(self, worktree_paths: list) -> None:
         """Remove worktrees created for a slice that crashed mid-flight."""
