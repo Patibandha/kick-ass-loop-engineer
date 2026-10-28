@@ -13,9 +13,10 @@ It then requires the unmutated ``HEAD`` to pass every marker it used. Exit statu
 mutation was caught and the clean run is green; 1 otherwise; 2 on a usage error. Standard library only.
 
 Families map to markers: ``gate-*`` -> ``guardrail_gate``, ``isolation-*`` -> ``guardrail_isolation``,
-``proof-*`` -> ``guardrail_proof``, ``proof-transition-*`` -> ``guardrail_proof_transition`` and
-``proof-authority-*`` -> ``guardrail_proof_authority`` (the longest
-matching family wins). The mutations are applied to the committed ``HEAD``, so commit (or
+``proof-*`` -> ``guardrail_proof``, ``proof-transition-*`` -> ``guardrail_proof_transition``,
+``proof-authority-*`` -> ``guardrail_proof_authority`` and ``confine-*`` -> ``guardrail_gate_confinement`` (the
+longest matching family wins). A family limited to some hosts (``confine-*`` mutates Windows-only code) is reported
+``not-applicable`` elsewhere: there the mutated code never runs, so no test could catch it. The mutations are applied to the committed ``HEAD``, so commit (or
 otherwise record) the code under test before running the check. Nothing from the environment is printed.
 """
 
@@ -39,11 +40,18 @@ FAMILY_MARKERS = {
     "proof": "guardrail_proof",
     "proof-transition": "guardrail_proof_transition",
     "proof-authority": "guardrail_proof_authority",
+    "confine": "guardrail_gate_confinement",
+}
+
+#: Patch-name prefix -> the ``os.name`` values where its mutated code runs (absent: every host).
+FAMILY_HOSTS = {
+    "confine": ("nt",),
 }
 
 CAUGHT = "caught"
 SURVIVED = "survived"
 NOT_APPLIED = "not-applied"
+NOT_APPLICABLE = "not-applicable"
 ERROR = "error"
 
 #: pytest exit code for "some tests failed": the only outcome that counts as a mutation being caught.
@@ -66,7 +74,7 @@ class MutationResult:
     Attributes:
         patch: File name of the patch.
         marker: Pytest marker expression that was run.
-        status: One of ``caught``, ``survived``, ``not-applied`` or ``error``.
+        status: One of ``caught``, ``survived``, ``not-applied``, ``not-applicable`` or ``error``.
         detail: Short human-readable explanation.
     """
 
@@ -77,8 +85,8 @@ class MutationResult:
 
     @property
     def ok(self) -> bool:
-        """True only when the mutation was caught."""
-        return self.status == CAUGHT
+        """True when the mutation was caught, or its code never runs on this host."""
+        return self.status in (CAUGHT, NOT_APPLICABLE)
 
 
 @dataclass
@@ -170,8 +178,8 @@ def run_marker(worktree: str, marker: str, timeout: float) -> subprocess.Complet
     return _run(argv, worktree, timeout, env=_pytest_env())
 
 
-def marker_for(patch: Path) -> str:
-    """The marker expression for *patch*, from its ``<family>-`` name prefix (the longest family that matches).
+def family_for(patch: Path) -> str:
+    """The family of *patch*: the longest known ``<family>-`` prefix of its name.
 
     Raises:
         MutationCheckError: When the prefix is not a known family.
@@ -180,12 +188,30 @@ def marker_for(patch: Path) -> str:
     if not families:
         raise MutationCheckError(
             f"{patch.name}: name must start with one of {', '.join(f + '-' for f in FAMILY_MARKERS)}")
-    return FAMILY_MARKERS[max(families, key=len)]
+    return max(families, key=len)
+
+
+def marker_for(patch: Path) -> str:
+    """The marker expression for *patch*, from its family.
+
+    Raises:
+        MutationCheckError: When the prefix is not a known family.
+    """
+    return FAMILY_MARKERS[family_for(patch)]
+
+
+def applies_here(patch: Path, os_name: str = os.name) -> bool:
+    """True when the code *patch* mutates runs on a host whose ``os.name`` is *os_name*."""
+    hosts = FAMILY_HOSTS.get(family_for(patch))
+    return hosts is None or os_name in hosts
 
 
 def check_mutation(repo: str, patch: Path, timeout: float) -> MutationResult:
     """Apply *patch* in a fresh worktree and require the family's guardrail tests to fail."""
     marker = marker_for(patch)
+    if not applies_here(patch):
+        return MutationResult(patch.name, marker, NOT_APPLICABLE,
+                              f"mutated code runs only on {', '.join(FAMILY_HOSTS[family_for(patch)])}")
     try:
         with Scratch(repo, timeout) as scratch:
             applied = _run([*_GIT, "apply", "--whitespace=nowarn", str(patch.resolve())],
@@ -245,7 +271,7 @@ def run_check(repo: str, mutations_dir: Path, timeout: float = DEFAULT_TIMEOUT, 
     """Run the whole check, printing one line per verdict; True when everything is green."""
     out = out or sys.stdout
     patches = find_patches(mutations_dir)
-    markers = [marker_for(p) for p in patches]
+    markers = [marker_for(p) for p in patches if applies_here(p)]
     ok = True
     for patch in patches:
         result = check_mutation(repo, patch, timeout)

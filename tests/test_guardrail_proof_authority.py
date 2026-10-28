@@ -12,7 +12,9 @@ Attacks (one row each in docs/acceptance/proof-authority.md, which every test ch
     D   write outside the worktree (the main workspace and an engine-source stand-in).
 
 An ACCEPTED attack is a recorded critical finding (PA-1, PA-2 in decisions.md); its test asserts today's
-outcome so the result is visible, not hidden. The fix belongs to its own scoped project.
+outcome so the result is visible, not hidden. The fix belongs to its own scoped project. PA-2 is fixed where the
+host can confine gates (Windows, ``confine.run_confined``): there B and D are REFUSED; elsewhere they stay ACCEPTED
+and the gate's evidence says ``unconfined``.
 """
 
 import json
@@ -24,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from kickass_loop_engineer import confine
 from kickass_loop_engineer.cursor import PipelineCursor
 from kickass_loop_engineer.ensemble import Attempt, select_winner
 from kickass_loop_engineer.gates import GateSpec, default_python
@@ -39,6 +42,10 @@ DOC = Path(__file__).resolve().parent.parent / "docs" / "acceptance" / "proof-au
 DECISIONS = DOC.parent / "decisions.md"
 ATTACKS = {"A1", "A2", "B", "C", "D"}
 OUTCOMES = {"REFUSED", "ACCEPTED"}
+#: Outcome cell for an attack refused only where gates are confined (Windows); ACCEPTED everywhere else.
+CONFINED_ONLY = "REFUSED (Windows; unconfined elsewhere)"
+#: This host's outcome for an attack that only gate confinement refuses.
+CONFINED_OUTCOME = "REFUSED" if confine.CONFINEMENT_AVAILABLE else "ACCEPTED"
 
 RIGHT = "def answer():\n    return 42\n"
 WRONG = "def answer():\n    return 41\n"
@@ -100,12 +107,12 @@ def _select_and_promote(manager, worktree, result, dest):
 
 
 def _recorded(attack):
-    """The outcome docs/acceptance/proof-authority.md records for *attack* (raises when the doc is missing)."""
+    """The outcome docs/acceptance/proof-authority.md records for *attack* on this host (raises when it is missing)."""
     rows = {}
     for line in DOC.read_text(encoding="utf-8").splitlines():
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        if line.startswith("|") and len(cells) >= 3 and cells[1] in OUTCOMES:
-            rows[cells[0]] = cells[1]
+        if line.startswith("|") and len(cells) >= 3 and cells[1] in OUTCOMES | {CONFINED_ONLY}:
+            rows[cells[0]] = CONFINED_OUTCOME if cells[1] == CONFINED_ONLY else cells[1]
     return rows.get(attack)
 
 
@@ -179,8 +186,8 @@ def _forged_cursor(tmp_path):
     return _read(cursor.path)
 
 
-def test_b_a_success_cursor_written_by_the_gate_into_the_main_workspace_is_trusted(tmp_path):
-    # CRITICAL FINDING PA-2 (docs/acceptance/proof-authority.md, decisions.md): this asserts today's outcome.
+def test_b_a_success_cursor_written_by_the_gate_is_refused_where_gates_are_confined(tmp_path):
+    # CRITICAL FINDING PA-2 (docs/acceptance/proof-authority.md, decisions.md): fixed on Windows, open elsewhere.
     forged = _forged_cursor(tmp_path)
     attacker = FIND_MAIN + f'''
 
@@ -197,12 +204,21 @@ def test_answer():
     _write(main, ".loop-engineer/plan.md", "# Plan\n- [ ] Task 1: do the thing\n")
     assert emit_next(main)["stage"] != "review"  # the control: no cursor, the engine has not run
 
-    run_gates(SPECS, worktree)
+    result = run_gates(SPECS, worktree)
 
-    assert json.loads(_read(os.path.join(main, ".loop-engineer", "pipeline.json")))["status"] == "success"
-    assert PipelineCursor(main).load()["status"] == "success"
-    assert emit_next(main)["stage"] == "review"  # the engine moves on as though the run succeeded
-    outcome = "ACCEPTED"
+    cursor = os.path.join(main, ".loop-engineer", "pipeline.json")
+    if confine.CONFINEMENT_AVAILABLE:
+        # The confined gate cannot write outside its worktree: the write fails, and so does the gate.
+        assert result.passed is False and "PermissionError" in result.records[0].evidence
+        assert not os.path.exists(cursor)
+        assert emit_next(main)["stage"] != "review"  # the engine does not load a planted cursor
+        outcome = "REFUSED"
+    else:
+        assert result.passed is True and result.records[0].evidence.endswith("; unconfined")
+        assert json.loads(_read(cursor))["status"] == "success"
+        assert PipelineCursor(main).load()["status"] == "success"
+        assert emit_next(main)["stage"] == "review"  # the engine moves on as though the run succeeded
+        outcome = "ACCEPTED"
     assert _recorded("B") == outcome
 
 
@@ -215,15 +231,19 @@ control, target, wrong = sys.argv[1], sys.argv[2], sys.argv[3]
 deadline = time.time() + 120
 while not os.path.exists(os.path.join(control, "go")) and time.time() < deadline:
     time.sleep(0.05)
-with open(target, "w") as handle:
-    handle.write(wrong)
-open(os.path.join(control, "done"), "w").close()
+try:
+    with open(target, "w") as handle:
+        handle.write(wrong)
+finally:
+    open(os.path.join(control, "done"), "w").close()
 '''
 
 
 def test_c_a_background_process_changing_the_candidate_after_its_digest_is_refused(tmp_path):
     control = str(tmp_path / "control")
     os.makedirs(control)
+    if confine.CONFINEMENT_AVAILABLE:
+        confine._label(control, "low")  # the test's own channel to the background process, not the attack
     attacker = f'''
 import os
 import subprocess
@@ -251,6 +271,11 @@ def test_answer():
     deadline = time.time() + 60
     while not os.path.exists(os.path.join(control, "done")) and time.time() < deadline:
         time.sleep(0.05)
+    if confine.CONFINEMENT_AVAILABLE:
+        # The worktree is labelled medium again once the gate ends: the low-integrity process left behind cannot
+        # write it either. The change it tried is made here so the digest binding is still what is tested.
+        assert _read(os.path.join(worktree, "impl.py")) == RIGHT
+        _write(worktree, "impl.py", WRONG)
     assert _read(os.path.join(worktree, "impl.py")) == WRONG
 
     winner, promoted = _select_and_promote(manager, worktree, result, str(tmp_path / "dest"))
@@ -265,10 +290,10 @@ def test_answer():
 # --------------------------------------------------------------------------- D: write outside the worktree
 
 
-def test_d_a_gate_writes_into_the_main_workspace_and_the_engine_source(tmp_path):
-    # CRITICAL FINDING PA-2 (docs/acceptance/proof-authority.md, decisions.md): this asserts today's outcome.
-    # The engine source is a stand-in folder: the gate runs as the engine's own user with no write confinement,
-    # so the real one is reachable the same way, but this test never writes to it.
+def test_d_writes_outside_the_worktree_are_refused_where_gates_are_confined(tmp_path):
+    # CRITICAL FINDING PA-2 (docs/acceptance/proof-authority.md, decisions.md): fixed on Windows, open elsewhere.
+    # The engine source is a stand-in folder: an unconfined gate runs as the engine's own user, so the real one
+    # is reachable the same way, but this test never writes to it.
     engine = str(tmp_path / "engine-src" / "kickass_loop_engineer")
     os.makedirs(engine)
     attacker = FIND_MAIN + f'''
@@ -286,10 +311,18 @@ def test_answer():
     result = run_gates(SPECS, worktree)
     winner, promoted = _select_and_promote(manager, worktree, result, str(tmp_path / "dest"))
 
-    assert result.passed is True and winner is not None and promoted == ["impl.py", "test_attack.py"]
-    assert _read(os.path.join(main, "planted.py")) == "PLANTED = True\n"
-    assert "return True" in _read(os.path.join(engine, "verifier.py"))
-    outcome = "ACCEPTED"
+    if confine.CONFINEMENT_AVAILABLE:
+        assert result.passed is False and "PermissionError" in result.records[0].evidence
+        assert winner is None and promoted is None
+        assert not os.path.exists(os.path.join(main, "planted.py"))
+        assert not os.path.exists(os.path.join(engine, "verifier.py"))
+        outcome = "REFUSED"
+    else:
+        assert result.passed is True and winner is not None and promoted == ["impl.py", "test_attack.py"]
+        assert result.records[0].evidence.endswith("; unconfined")
+        assert _read(os.path.join(main, "planted.py")) == "PLANTED = True\n"
+        assert "return True" in _read(os.path.join(engine, "verifier.py"))
+        outcome = "ACCEPTED"
     assert _recorded("D") == outcome
 
 
@@ -302,13 +335,15 @@ def test_the_doc_records_every_attack_once_and_names_the_code_that_decides_it():
     ids = [line.strip("|").split("|")[0].strip() for line in rows]
     assert sorted(ids) == sorted(ATTACKS)
     for line in rows:
+        if line.split("|")[2].strip() == CONFINED_ONLY:
+            assert "src/kickass_loop_engineer/confine.py::run_confined" in line, line
         assert re.search(r"src/kickass_loop_engineer/\w+\.py::\w+", line), line
 
 
 def test_every_accepted_attack_is_a_critical_finding_in_both_docs():
     doc, decisions = DOC.read_text(encoding="utf-8"), DECISIONS.read_text(encoding="utf-8")
     accepted = sorted(attack for attack in ATTACKS if _recorded(attack) == "ACCEPTED")
-    assert accepted == ["A2", "B", "D"]
+    assert accepted == (["A2"] if confine.CONFINEMENT_AVAILABLE else ["A2", "B", "D"])
     for finding in ("PA-1", "PA-2"):
         assert f"CRITICAL FINDING {finding}" in doc
         assert f"CRITICAL FINDING {finding}" in decisions

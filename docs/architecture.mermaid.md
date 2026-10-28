@@ -109,6 +109,7 @@ graph TD
     kickass_loop_engineer_decision_staffing["kickass_loop_engineer.decision.staffing"] --> kickass_loop_engineer_decision_floors["kickass_loop_engineer.decision.floors"]
     kickass_loop_engineer_ensemble["kickass_loop_engineer.ensemble"] --> kickass_loop_engineer_verifier["kickass_loop_engineer.verifier"]
     kickass_loop_engineer_escalation["kickass_loop_engineer.escalation"] --> kickass_loop_engineer_guardrails["kickass_loop_engineer.guardrails"]
+    kickass_loop_engineer_guardrails["kickass_loop_engineer.guardrails"] --> kickass_loop_engineer_confine["kickass_loop_engineer.confine"]
     kickass_loop_engineer_interview["kickass_loop_engineer.interview"] --> kickass_loop_engineer_gates["kickass_loop_engineer.gates"]
     kickass_loop_engineer_interview["kickass_loop_engineer.interview"] --> kickass_loop_engineer_guardrails["kickass_loop_engineer.guardrails"]
     kickass_loop_engineer_ledger["kickass_loop_engineer.ledger"] --> kickass_loop_engineer_workspace["kickass_loop_engineer.workspace"]

@@ -27,6 +27,8 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Optional
 
+from . import confine
+
 logger = logging.getLogger("kickass_loop_engineer.guardrails")
 
 DEFAULT_PROTECTED = (
@@ -134,6 +136,7 @@ class VerificationResult:
         stdout_tail: Trailing stdout for context.
         stderr_tail: Trailing stderr for context.
         error: Reason the command was rejected or failed to run.
+        confined: True when the command ran confined to its working folder (see ``confine``).
     """
 
     passed: bool
@@ -142,6 +145,7 @@ class VerificationResult:
     stdout_tail: str = ""
     stderr_tail: str = ""
     error: str = ""
+    confined: bool = False
 
 
 #: Files that mark a Python project root; with a ``src/`` folder beside one, gates import that folder first.
@@ -253,19 +257,14 @@ class VerificationPolicy:
         pycache = None
         try:
             pycache = env["PYTHONPYCACHEPREFIX"] = tempfile.mkdtemp(prefix="le-pycache-")
-            completed = subprocess.run(
-                argv,
-                cwd=cwd,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout_seconds,
-                check=False,
-            )
+            completed, confined = confine.run_confined(argv, cwd=cwd, env=env, timeout=self.timeout_seconds)
         except FileNotFoundError:
             return VerificationResult(passed=False, command=command, error="verification tool not found")
         except subprocess.TimeoutExpired:
             return VerificationResult(passed=False, command=command, error=f"timed out after {self.timeout_seconds:.0f}s")
+        except confine.ConfinementError as exc:
+            # Never retried unconfined: a confinement step that fails is a failed gate.
+            return VerificationResult(passed=False, command=command, error=f"confinement failed: {exc}")
         except OSError as exc:
             return VerificationResult(passed=False, command=command, error=f"failed to run: {exc}")
         finally:
@@ -279,6 +278,7 @@ class VerificationPolicy:
             returncode=completed.returncode,
             stdout_tail=(completed.stdout or "")[-self.tail_chars:],
             stderr_tail=(completed.stderr or "")[-self.tail_chars:],
+            confined=confined,
         )
         if not result.passed or not expect:
             return result
