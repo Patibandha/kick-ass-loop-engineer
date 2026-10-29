@@ -951,7 +951,10 @@ def build_orchestrator(config: dict[str, Any], *, workspace: str, month: str,
     reviewer_family = str(reviewer_cfg.pop("family", "") or "")
     # Operator override of the cross-model guard (see review.ensure_cross_model).
     allow_same_family = reviewer_cfg.pop("allow_same_family", False) is True
-    reviewer_provider = build_provider(reviewer_cfg.pop("provider"), **reviewer_cfg)
+    reviewer_provider_name = reviewer_cfg.pop("provider")
+    if reviewer_provider_name == "claude_code":
+        reviewer_cfg.setdefault("isolated", True)
+    reviewer_provider = build_provider(reviewer_provider_name, **reviewer_cfg)
     builder_model = getattr(builder.provider, "model", None) or builder.provider.name
     reviewer_model = getattr(reviewer_provider, "model", None) or reviewer_provider.name
     # format_retries governs BOTH agents (as documented): the reviewer's paid

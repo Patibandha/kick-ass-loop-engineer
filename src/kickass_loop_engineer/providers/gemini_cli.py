@@ -52,6 +52,8 @@ import os
 import subprocess
 from typing import Optional
 
+from ..guardrails import is_credential_env
+
 from .base import (
     Provider,
     ProviderError,
@@ -274,8 +276,15 @@ class GeminiCliProvider(Provider):
                 reported error status.
         """
         # Decision-model keys are never the builder's business.
+        keep_auth = (
+            ()
+            if self.force_subscription
+            else ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_API_KEY")
+        )
         env = {k: v for k, v in os.environ.items()
-               if k not in ("TYPESAFE_API_KEY", "CLOUDFLARE_API_TOKEN")}
+               if (k in keep_auth or not is_credential_env(k))
+               and k not in ("TYPESAFE_API_KEY", "CLOUDFLARE_API_TOKEN")}
+        # Credential scrub applied above.
         if self.force_subscription:
             for key in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_API_KEY"):
                 env.pop(key, None)

@@ -96,6 +96,9 @@ class _GateDidNotRun(RuntimeError):
     """A proof run of the gate could not complete (rejected, not launched, timed out): neither red nor green."""
 
 
+_pending_stash_sha: dict[str, list[str]] = {}
+
+
 def _gate_passes(gate_cmd: str, workspace: str, policy: VerificationPolicy) -> bool:
     """Run an allowlisted gate; return True iff it exits zero.
 
@@ -103,6 +106,9 @@ def _gate_passes(gate_cmd: str, workspace: str, policy: VerificationPolicy) -> b
         _GateDidNotRun: When the gate could not complete. A timeout with the change reverted is not the
             gate turning red, so it must never count as proof.
     """
+    box = _pending_stash_sha.pop(workspace, None)
+    if box is not None:
+        box.append(_git(workspace, "rev-parse", "refs/stash").stdout.strip())
     result = policy.run(gate_cmd, cwd=workspace)
     if result.error:
         raise _GateDidNotRun(result.error)
@@ -363,6 +369,8 @@ def prove(gate_cmd: str, workspace: str, policy: Optional[VerificationPolicy] = 
             record.skipped_reason = tests_only_reason
             return record
         unstashable = _unstashable(workspace, entries, to_revert)
+        stash_sha: list[str] = []
+        _pending_stash_sha[workspace] = stash_sha
         stashed: Optional[list[str]] = None  # None: the whole tree was stashed
         if unstashable:
             # git cannot scope a stash to a staged deletion or a rename source,
@@ -386,6 +394,17 @@ def prove(gate_cmd: str, workspace: str, policy: Optional[VerificationPolicy] = 
             # tree.
             _discard_gate_side_effects(workspace, stashed)
             try:
+                _pending_stash_sha.pop(workspace, None)
+                current_stash = _git(workspace, "rev-parse", "refs/stash").stdout.strip()
+                if stash_sha and current_stash != stash_sha[0]:
+                    raise subprocess.CalledProcessError(
+                        1,
+                        ["git", "stash", "pop"],
+                        stderr=(
+                            f"refusing to pop stash: refs/stash changed during proof "
+                            f"(expected {stash_sha[0]}, got {current_stash})"
+                        ),
+                    )
                 _git(workspace, "stash", "pop")
             except subprocess.CalledProcessError as exc:
                 record.aborted = True

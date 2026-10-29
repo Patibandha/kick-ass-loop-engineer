@@ -65,7 +65,12 @@ SCRUBBED_ENV_KEYS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "TYPESAFE_API_
                      "CLOUDFLARE_API_TOKEN")
 #: Any other credential-named variable (``OPENAI_API_KEY``, ``GITHUB_TOKEN``, ``DB_PASSWORD``…) is scrubbed too:
 #: a gate's output is journaled, so whatever reaches the gate can reach a log.
-_CREDENTIAL_NAME = re.compile(r"(?i)(API_?KEY|TOKEN|SECRET|PASSWORD)$")
+_CREDENTIAL_NAME = re.compile(r"(?i)(API_?KEY|ACCESS_?KEY|SECRET_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)($|_)")
+
+
+def is_credential_env(name: str) -> bool:
+    """Return True when *name* is a scrubbed credential environment variable."""
+    return name in SCRUBBED_ENV_KEYS or bool(_CREDENTIAL_NAME.search(name))
 
 #: ``^`` and ``%`` are cmd.exe syntax (escape, variable expansion): Windows runs a ``.cmd``/``.bat`` shim
 #: such as ``npm.cmd`` through cmd.exe even without ``shell=True``, so they must never reach one.
