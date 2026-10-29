@@ -128,5 +128,60 @@ def test_promote_never_propagates_deletions(tmp_path):
     mgr.remove(wt)
 
 
+    mgr.remove(wt)
+
+
+def test_promote_refuses_protected_path_via_write_policy(tmp_path):
+    from kickass_loop_engineer.worktree import WorktreeError
+    import pytest
+    repo = _make_repo(tmp_path)
+    mgr = WorktreeManager(str(repo), base_dir=str(tmp_path / "wts"))
+    wt = mgr.create("attempt")
+    (Path(wt) / "valid.py").write_text("X = 1\n")
+    (Path(wt) / ".env").write_text("SECRET=leak\n")
+
+    with pytest.raises(WorktreeError, match="rejected by WritePolicy"):
+        mgr.promote(wt, str(repo))
+
+    assert not (repo / ".env").exists()
+    assert not (repo / "valid.py").exists()
+    mgr.remove(wt)
+
+
+def test_promote_refuses_when_git_config_modified_during_attempt(tmp_path):
+    from kickass_loop_engineer.worktree import WorktreeError
+    import pytest
+    repo = _make_repo(tmp_path)
+    mgr = WorktreeManager(str(repo), base_dir=str(tmp_path / "wts"))
+    wt = mgr.create("attempt")
+    (Path(wt) / "new_module.py").write_text("VALUE = 1\n")
+    git_config = repo / ".git" / "config"
+    git_config.write_text(git_config.read_text() + "\n[core]\n\tfsmonitor = evil\n")
+
+    with pytest.raises(WorktreeError, match=r"\.git/config or \.git/hooks was modified"):
+        mgr.promote(wt, str(repo))
+
+    assert not (repo / "new_module.py").exists()
+    mgr.remove(wt)
+
+
+def test_promote_refuses_when_git_hooks_modified_during_attempt(tmp_path):
+    from kickass_loop_engineer.worktree import WorktreeError
+    import pytest
+    repo = _make_repo(tmp_path)
+    mgr = WorktreeManager(str(repo), base_dir=str(tmp_path / "wts"))
+    wt = mgr.create("attempt")
+    (Path(wt) / "new_module.py").write_text("VALUE = 1\n")
+    hooks_dir = repo / ".git" / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    (hooks_dir / "post-checkout").write_text("#!/bin/sh\necho pwned\n")
+
+    with pytest.raises(WorktreeError, match=r"\.git/config or \.git/hooks was modified"):
+        mgr.promote(wt, str(repo))
+
+    assert not (repo / "new_module.py").exists()
+    mgr.remove(wt)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

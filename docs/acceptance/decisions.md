@@ -1,18 +1,19 @@
 # Acceptance decisions
 
-One entry per row of [proof-binding.md](proof-binding.md). Each records what the engine does today, read from the
-code. Nothing here changes engine behavior; anything that looks unintended is under
-[Open questions for Meet](#open-questions-for-meet), not decided here.
+One entry per row of [proof-binding.md](proof-binding.md). Each records what the engine enforces in `v3.5.0`,
+including Meet's 2026-10-29 sign-off on [Open questions for Meet](#open-questions-for-meet).
 
 ## D1 candidate bytes
 
-BOUND. The gate runs in the attempt worktree, the reviewer snapshot is read from it, and `promote` copies that tree.
-The promoted workspace is then gated again. By sequencing, not by hash: no digest of the gated bytes is recorded. See Q1, Q2.
+BOUND. `run_gates` binds a SHA-256 digest of the candidate's paths, bytes and write times (`GatesResult.candidate_digest`).
+`promote` verifies `expected_digest` against the exact bytes read and re-checks every candidate path against `WritePolicy`
+before writing, then the promoted workspace is gated again. Resolved in Q1 and Q2 (2026-10-29).
 
 ## D2 workspace identity
 
 BOUND. Worktrees are detached at HEAD, seeded from the workspace's uncommitted files, and gated with that cwd.
-A builder commit is rewound; a HEAD that moved elsewhere raises. No worktree path or HEAD sha is stored in evidence. See Q3.
+A builder commit is rewound; a HEAD that moved elsewhere raises. Proof-of-test (`prove`) records the exact `refs/stash`
+commit SHA immediately after `git stash push` and verifies `refs/stash` matches before `git stash pop`. Resolved in Q3 (2026-10-29).
 
 ## D3 gate command
 
@@ -22,45 +23,49 @@ BOUND. Config supplies the command; the allowlist, metacharacter ban and PATH-ou
 ## D4 configuration
 
 MUTABLE-ON-PURPOSE. Engine YAML is read once, outside the builder's reach. Project test config is ordinary
-builder-writable source, reverted by proof-of-test as a non-test file. See Q4.
+builder-writable source, reverted by proof-of-test as a non-test file (and `conftest.py` as test-support). Confirmed by Meet in Q4 (2026-10-29).
 
 ## D5 environment
 
-MUTABLE-ON-PURPOSE. A gate sees the engine's own environment minus credentials. All three proof runs share one
-process, so they see the same one, but it is not pinned or recorded. See Q5.
+MUTABLE-ON-PURPOSE. Gates and all three CLI providers (`claude_code`, `codex_cli`, `gemini_cli`) scrub every environment
+variable matching `is_credential_env` (`SCRUBBED_ENV_KEYS` plus `(?i)(API_?KEY|TOKEN|SECRET|PASSWORD)$`). Confirmed and hardened in Q5 (2026-10-29).
 
 ## D6 dependencies
 
-MUTABLE-ON-PURPOSE. Interpreter and packages come from the host; the engine neither locks nor hashes them. See Q6.
+MUTABLE-ON-PURPOSE. Interpreter and packages come from the host PATH outside the workspace; the host toolchain is
+accepted as trusted. Confirmed by Meet in Q6 (2026-10-29).
 
 ## D7 git config
 
-MUTABLE-ON-PURPOSE. Every git call uses ambient user, system and repository config. See Q7.
+BOUND. `WorktreeManager` records a deterministic SHA-256 digest of `.git/config` and all files under `.git/hooks/` when
+creating a worktree, and `promote` refuses if either changed during the attempt. Resolved in Q7 (2026-10-29).
 
 ## D8 plugins
 
-MUTABLE-ON-PURPOSE. Isolation for Claude CLI roles is opt-in (`isolated`, `profile_dir`); pytest plugins autoload. See Q8.
+MUTABLE-ON-PURPOSE. Reviewer `claude_code` defaults to `isolated=True` in `build_orchestrator` (no session persistence,
+strict MCP, disabled slash commands, project-only settings, fresh scratch cwd), while builders keep `isolated=False` by
+default and pytest plugins autoload. Resolved in Q8 (2026-10-29).
 
 ## Open questions for Meet
 
-Each is current behavior that looks unintended. Classified truthfully above and left undecided here.
+All eight questions (Q1–Q8) were reviewed and resolved by Meet on 2026-10-29 (`v3.5.0`):
 
-- **Q1** `promote` applies no `WritePolicy`; harvest checked the builder's files before the gates ran. A file a test
-  run creates in the worktree (say `.env` or `x.pem`) is copied into your workspace. Re-check at promote?
-- **Q2** Evidence carries no digest of the gated bytes. Hashes exist only in `Workspace.fingerprint`, for the harvest
-  diff. Record one at gate time and compare it at promote?
-- **Q3** Proof-of-test runs `git stash push` then a bare `git stash pop`. The stash stack is shared by all worktrees of a
-  repo, so a concurrent stash could be popped by mistake. Capture and pop by SHA?
-- **Q4** Outside fix mode, a builder-written pytest.ini or conftest.py shapes the gate. Only the fix-mode repro gate
-  disables them (`--noconftest -o addopts=`). Extend that to every gate?
-- **Q5** `SCRUBBED_ENV_KEYS` says credentials are not forwarded to "a builder CLI", but the Claude, Codex and Gemini
-  providers strip only a few named keys. A Bash-capable builder still sees `GITHUB_TOKEN` and similar. Apply the gate's scrub?
-- **Q6** A Bash-capable builder can install packages into the interpreter the gates use, and nothing detects it.
-  Pin dependencies, or accept the host toolchain as trusted?
-- **Q7** `.git/config` and hooks sit in the common git dir shared by all worktrees. Harvest only reads `git status`
-  paths, so a builder edit there is never seen or reverted. Run git with config isolation?
-- **Q8** `claude_code` defaults to `isolated: false` and no profile, so builder and reviewer load your plugins, skills,
-  MCP servers and CLAUDE.md, and a non-isolated reviewer starts in the engine's cwd. Make isolation the default?
+- **Q1** (**Resolved 2026-10-29 — Enforced**): `WorktreeManager.promote` now re-checks every candidate path against
+  `WritePolicy.check_path` before copying, refusing any protected file (such as `.env` or `id_rsa`) created in the worktree after harvest.
+- **Q2** (**Resolved 2026-10-29 — Enforced**): `run_gates` binds a SHA-256 `candidate_digest` and `select_winner`,
+  `still_fresh`, and `WorktreeManager.promote(expected_digest=...)` refuse any candidate modified after its gate passed.
+- **Q3** (**Resolved 2026-10-29 — Enforced**): `verifier.prove` captures the `refs/stash` SHA immediately after
+  `git stash push` and verifies `refs/stash` matches before `git stash pop`, aborting the proof if the stash stack changed.
+- **Q4** (**Resolved 2026-10-29 — Confirmed `MUTABLE-ON-PURPOSE`**): Outside fix mode, project test config (`pytest.ini`,
+  `conftest.py`) remains builder-writable and is reverted during proof-of-test (`conftest.py` carries a `support_only` review note).
+- **Q5** (**Resolved 2026-10-29 — Enforced**): `guardrails.is_credential_env` is now applied across `claude_code`,
+  `codex_cli`, and `gemini_cli` so `GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `DB_PASSWORD`, and all matching credential vars are stripped.
+- **Q6** (**Resolved 2026-10-29 — Confirmed `MUTABLE-ON-PURPOSE`**): The host toolchain and interpreter outside the
+  workspace are accepted as trusted.
+- **Q7** (**Resolved 2026-10-29 — Enforced**): `WorktreeManager` hashes `.git/config` and `.git/hooks/` at worktree
+  creation and refuses `promote` if the shared git configuration or hooks were modified during the attempt.
+- **Q8** (**Resolved 2026-10-29 — Enforced**): `build_orchestrator` now defaults reviewer `claude_code` to
+  `isolated=True` while keeping builder `isolated=False` by default.
 
 ## Proof authority findings
 

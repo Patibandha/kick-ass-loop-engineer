@@ -149,6 +149,23 @@ class GeminiCliCommandTests(unittest.TestCase):
             env = self.run_call(force_subscription=False).call_args.kwargs["env"]
         self.assertEqual(env["GEMINI_API_KEY"], "k")
 
+    def test_arbitrary_credential_env_vars_are_scrubbed(self):
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "GITHUB_TOKEN": "ghp_1",
+                "AWS_SECRET": "aws_1",
+                "DB_PASSWORD": "pw_1",
+                "OPENAI_API_KEY": "sk_1",
+                "SAFE_VAR": "ok",
+            },
+            clear=False,
+        ):
+            env = self.run_call().call_args.kwargs["env"]
+        for key in ("GITHUB_TOKEN", "AWS_SECRET", "DB_PASSWORD", "OPENAI_API_KEY"):
+            self.assertNotIn(key, env)
+        self.assertEqual(env["SAFE_VAR"], "ok")
+
 
 class GeminiCliFailureTests(unittest.TestCase):
     """Error semantics mirror the Claude Code provider's."""
