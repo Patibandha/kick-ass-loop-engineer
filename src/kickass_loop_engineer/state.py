@@ -20,7 +20,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from .workspace import write_text_unlinked
+from .workspace import append_line_unlinked, write_text_unlinked
 
 logger = logging.getLogger("kickass_loop_engineer.state")
 
@@ -116,8 +116,7 @@ class RunState:
         self._rounds.append(record)
         try:
             os.makedirs(self.dir, exist_ok=True)
-            with open(self.rounds_path, "a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record) + "\n")
+            append_line_unlinked(self.rounds_path, json.dumps(record))
         except OSError:
             logger.exception("could not persist round record")
         self._write_state_md(self._rounds)

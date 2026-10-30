@@ -303,6 +303,46 @@ class ProofRobustnessTests(unittest.TestCase):
         self.assertIn("stash", record.error)
         self.assertFalse(record.proven)
 
+    def test_stash_sha_mismatch_refuses_to_pop_and_marks_aborted(self):
+        import kickass_loop_engineer.verifier as v
+        repo = _init_repo()
+        with open(os.path.join(repo, "test_feature.py"), "w") as f:
+            f.write("from impl import answer\n\ndef test_answer():\n    assert answer()==42\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-m", "baseline")
+        with open(os.path.join(repo, "impl.py"), "w") as f:
+            f.write("def answer():\n    return 42\n")
+        real_git = v._git
+        rev_parse_calls = []
+        pop_called = []
+
+        def fake_git(ws, *args, **kw):
+            if args[:2] == ("rev-parse", "refs/stash"):
+                res = real_git(ws, *args, **kw)
+                rev_parse_calls.append(res.stdout.strip())
+                if len(rev_parse_calls) >= 2:
+                    return subprocess.CompletedProcess(
+                        args=["git", *args], returncode=0, stdout="deadbeef" * 5 + "\n", stderr=""
+                    )
+                return res
+            if args[:2] == ("stash", "pop"):
+                pop_called.append(True)
+            return real_git(ws, *args, **kw)
+
+        v._git = fake_git
+        try:
+            record = prove(gate_cmd="pytest -q", workspace=repo)
+        finally:
+            v._git = real_git
+            subprocess.run(["git", "stash", "drop"], cwd=repo,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.assertEqual(len(rev_parse_calls), 2)
+        self.assertEqual(pop_called, [])
+        self.assertTrue(record.aborted)
+        self.assertFalse(record.green_after)
+        self.assertIn("refs/stash changed", record.error)
+        self.assertFalse(record.proven)
+
 
 class RunGatesTests(unittest.TestCase):
     """Fail-fast multi-gate runner; the underlying run_gate is faked."""

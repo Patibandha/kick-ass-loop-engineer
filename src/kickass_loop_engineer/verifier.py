@@ -34,11 +34,12 @@ import logging
 import os
 import subprocess
 from dataclasses import dataclass, field, replace
-from typing import Optional
+from typing import Optional, Sequence
 
 from .archmap import ARCHMAP_RELPATH
 from .gates import GATES
-from .guardrails import VerificationPolicy
+from .guardrails import _SHELL_METACHARACTERS, VerificationPolicy
+from .workspace import candidate_digest, digest_matches
 
 logger = logging.getLogger(__name__)
 
@@ -91,9 +92,60 @@ class ProofRecord:
         return self.green_before and self.red_when_reverted and self.green_after
 
 
+class _GateDidNotRun(RuntimeError):
+    """A proof run of the gate could not complete (rejected, not launched, timed out): neither red nor green."""
+
+
+_pending_stash_sha: dict[str, list[str]] = {}
+_pending_red_gate_cmd: dict[str, str] = {}
+
+_PYTEST_SCOPED_PREFIXES = ("pytest", "python -m pytest", "python3 -m pytest")
+
+
+def scoped_gate_command(gate_command: str, test_files: Sequence[str]) -> str:
+    """Append safe relative test file paths to a pytest *gate_command* for fast-path red verification."""
+    stripped = (gate_command or "").strip()
+    if not stripped or not test_files:
+        return gate_command
+    if not any(stripped == p or stripped.startswith(p + " ") for p in _PYTEST_SCOPED_PREFIXES):
+        return gate_command
+    safe_tests: list[str] = []
+    for raw in test_files:
+        if not isinstance(raw, str):
+            return gate_command
+        norm = raw.replace("\\", "/").strip()
+        if (
+            not norm
+            or os.path.isabs(raw)
+            or norm.startswith(("/", "-"))
+            or ":" in norm
+            or ".." in norm.split("/")
+            or any(meta in norm for meta in _SHELL_METACHARACTERS)
+            or any(ch.isspace() for ch in norm)
+        ):
+            return gate_command
+        if _is_test_path(norm) and not _is_test_support(norm) and norm not in safe_tests:
+            safe_tests.append(norm)
+    if not safe_tests:
+        return gate_command
+    return f"{stripped} {' '.join(safe_tests)}"
+
+
 def _gate_passes(gate_cmd: str, workspace: str, policy: VerificationPolicy) -> bool:
-    """Run an allowlisted gate; return True iff it exits zero."""
-    return policy.run(gate_cmd, cwd=workspace).passed
+    """Run an allowlisted gate; return True iff it exits zero.
+
+    Raises:
+        _GateDidNotRun: When the gate could not complete. A timeout with the change reverted is not the
+            gate turning red, so it must never count as proof.
+    """
+    box = _pending_stash_sha.pop(workspace, None)
+    if box is not None:
+        box.append(_git(workspace, "rev-parse", "refs/stash").stdout.strip())
+    effective_cmd = _pending_red_gate_cmd.pop(workspace, None) or gate_cmd
+    result = policy.run(effective_cmd, cwd=workspace)
+    if result.error:
+        raise _GateDidNotRun(result.error)
+    return result.passed
 
 
 def _git(workspace: str, *args: str, timeout: float = 60.0) -> subprocess.CompletedProcess:
@@ -281,7 +333,7 @@ def _summarize(paths: list[str], limit: int = 5) -> str:
     return f"{shown}, +{remainder} more" if remainder > 0 else shown
 
 
-def prove(gate_cmd: str, workspace: str, policy: Optional[VerificationPolicy] = None) -> ProofRecord:
+def prove(gate_cmd: str, workspace: str, policy: Optional[VerificationPolicy] = None, fast_red_scope: bool = False) -> ProofRecord:
     """Prove a gate's pass is real by reverting the change's non-test files.
 
     Runs the gate green->red->green around a ``git stash`` of every changed
@@ -350,6 +402,14 @@ def prove(gate_cmd: str, workspace: str, policy: Optional[VerificationPolicy] = 
             record.skipped_reason = tests_only_reason
             return record
         unstashable = _unstashable(workspace, entries, to_revert)
+        stash_sha: list[str] = []
+        _pending_stash_sha[workspace] = stash_sha
+        if fast_red_scope:
+            test_modules = [
+                changed for changed in dict.fromkeys(c for _code, c in entries)
+                if _is_test_path(changed) and not _is_test_support(changed)
+            ]
+            _pending_red_gate_cmd[workspace] = scoped_gate_command(gate_cmd, test_modules)
         stashed: Optional[list[str]] = None  # None: the whole tree was stashed
         if unstashable:
             # git cannot scope a stash to a staged deletion or a rename source,
@@ -373,6 +433,17 @@ def prove(gate_cmd: str, workspace: str, policy: Optional[VerificationPolicy] = 
             # tree.
             _discard_gate_side_effects(workspace, stashed)
             try:
+                _pending_stash_sha.pop(workspace, None)
+                current_stash = _git(workspace, "rev-parse", "refs/stash").stdout.strip()
+                if stash_sha and current_stash != stash_sha[0]:
+                    raise subprocess.CalledProcessError(
+                        1,
+                        ["git", "stash", "pop"],
+                        stderr=(
+                            f"refusing to pop stash: refs/stash changed during proof "
+                            f"(expected {stash_sha[0]}, got {current_stash})"
+                        ),
+                    )
                 _git(workspace, "stash", "pop")
             except subprocess.CalledProcessError as exc:
                 record.aborted = True
@@ -388,6 +459,9 @@ def prove(gate_cmd: str, workspace: str, policy: Optional[VerificationPolicy] = 
             # Only test-support files changed and the gate does not need them
             # (a marker-registration line in conftest.py): the tests-only waiver.
             record.skipped_reason = tests_only_reason
+    except _GateDidNotRun as exc:
+        record.red_when_reverted = record.green_after = False
+        record.error = f"gate could not run during the proof: {exc}"
     except subprocess.CalledProcessError as exc:
         record.error = f"git operation failed: {(exc.stderr or exc)}"
     except subprocess.TimeoutExpired as exc:
@@ -499,6 +573,8 @@ def run_gate(name: str, command: str, workspace: str, with_proof: bool = False,
     evidence = f"exit={result.returncode}; {_evidence_tail(result.stdout_tail or result.stderr_tail or '')}"
     if result.error:
         evidence = f"error: {result.error}"
+    elif not result.confined:
+        evidence += "; unconfined"  # the host could not confine the gate's writes (PA-2)
     record = EvidenceRecord(gate=name, command=command, passed=result.passed, evidence=evidence)
     if with_proof and result.passed:
         record.proof = prove(command, workspace, policy)
@@ -523,6 +599,10 @@ class GatesResult:
     """
 
     records: list = field(default_factory=list)
+    #: sha256 binding of the candidate the gates ran on (``workspace.candidate_digest``), taken by
+    #: ``run_gates`` after the last gate. ``""`` means the candidate could not be read, which no consumer
+    #: accepts; ``None`` means the result was not produced by ``run_gates`` and binds nothing.
+    candidate_digest: Optional[str] = None
 
     @property
     def passed(self) -> bool:
@@ -532,6 +612,32 @@ class GatesResult:
     def to_dict(self) -> dict:
         """Return a JSON-serializable ``{"passed": ..., "gates": [...]}``."""
         return {"passed": self.passed, "gates": [r.to_dict() for r in self.records]}
+
+
+def bound_digest(evidence) -> Optional[str]:
+    """The candidate binding a gate verdict carries, or None when it carries none."""
+    return getattr(evidence, "candidate_digest", None)
+
+
+def still_fresh(evidence, workspace: str) -> bool:
+    """Say whether *evidence* still describes the candidate in *workspace* (owner policy: fail closed).
+
+    Evidence from ``run_gates`` is bound to the candidate's bytes and write times when its gates ran. Any
+    change since, including a change written back to identical bytes, makes the verdict stale: it is never
+    reused, the candidate must be gated again. A candidate that cannot be read is stale too. Evidence that
+    binds nothing (not produced by ``run_gates``) is judged on ``passed`` alone by its consumer.
+    """
+    bound = bound_digest(evidence)
+    if bound is None:
+        # shortcut: unbound evidence counts as fresh because test fakes build it; run_gates always binds a digest,
+        # so no production pass is unbound. Upgrade to `return False` once the gate fakes bind digests.
+        return True
+    try:
+        current = candidate_digest(workspace)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("candidate in %s cannot be re-read; its gate verdict is stale: %s", workspace, exc)
+        return False
+    return digest_matches(bound, current)
 
 
 def _run_observer(command: str, workspace: str,
@@ -599,4 +705,59 @@ def run_gates(specs, workspace: str, policy: Optional[VerificationPolicy] = None
             if observe:
                 record.observed = _run_observer(observe, workspace, policy)
             break
+    if result.passed:
+        # Bind the verdict to the exact candidate it is about, AFTER the last gate (a proof's stash and pop
+        # rewrites the files). Consumers refuse the verdict once the candidate differs from this binding.
+        try:
+            result.candidate_digest = candidate_digest(workspace)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+            logger.warning("cannot bind the gate verdict in %s to its candidate: %s", workspace, exc)
+            result.candidate_digest = ""
     return result
+
+
+class ProofOfTestVerifier:
+    """Verifier wrapper supporting optional ``fast_red_scope`` for scoped ``red_when_reverted`` pytest runs."""
+
+    def __init__(
+        self,
+        policy: Optional[VerificationPolicy] = None,
+        fast_red_scope: bool = False,
+    ) -> None:
+        if isinstance(policy, bool):
+            fast_red_scope = policy
+            policy = None
+        self.policy = policy or VerificationPolicy()
+        self.fast_red_scope = bool(fast_red_scope)
+
+    def prove(
+        self,
+        gate_cmd: str,
+        workspace: str,
+        policy: Optional[VerificationPolicy] = None,
+    ) -> ProofRecord:
+        """Run green -> red -> green proof-of-test using ``fast_red_scope`` when enabled."""
+        return prove(
+            gate_cmd,
+            workspace,
+            policy=policy or self.policy,
+            fast_red_scope=self.fast_red_scope,
+        )
+
+    def verify(
+        self,
+        gate_cmd: str,
+        workspace: str,
+        policy: Optional[VerificationPolicy] = None,
+    ) -> ProofRecord:
+        """Alias for :meth:`prove`."""
+        return self.prove(gate_cmd, workspace, policy=policy)
+
+    def __call__(
+        self,
+        gate_cmd: str,
+        workspace: str,
+        policy: Optional[VerificationPolicy] = None,
+    ) -> ProofRecord:
+        return self.prove(gate_cmd, workspace, policy=policy)
+

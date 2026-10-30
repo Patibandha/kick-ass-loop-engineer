@@ -10,7 +10,7 @@ import re
 
 import kickass_loop_engineer
 
-EXPECTED_VERSION = "3.4.0"
+EXPECTED_VERSION = "3.5.0"
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _PYPROJECT = os.path.join(_ROOT, "pyproject.toml")

@@ -5,6 +5,7 @@ directory — so concurrent file edits cannot collide.
 """
 
 import contextlib
+import hashlib
 import os
 import re
 import shutil
@@ -12,7 +13,8 @@ import subprocess
 import tempfile
 from typing import Generator, Optional
 
-from .workspace import changed_paths, contained
+from .guardrails import WritePolicy
+from .workspace import candidate_files, changed_paths, contained, digest_matches, digest_of
 
 
 class WorktreeError(Exception):
@@ -38,6 +40,8 @@ class WorktreeManager:
         self._repo_root = os.path.abspath(repo_root)
         self._base_dir: str = base_dir if base_dir is not None else tempfile.mkdtemp()
         self._counter: int = 0
+        self._git_Baseline: dict[str, str] = {}
+        self._init_git_baseline: str = self._git_config_digest()
 
     # ------------------------------------------------------------------
     # Public API
@@ -72,7 +76,9 @@ class WorktreeManager:
         path = os.path.join(self._base_dir, f"{slug}-{self._counter}")
         self._git("worktree", "add", "--detach", path, "HEAD")
         self._seed_uncommitted(os.path.abspath(path))
-        return os.path.abspath(path)
+        wt_path = os.path.abspath(path)
+        self._git_Baseline[os.path.normcase(os.path.realpath(wt_path))] = self._git_config_digest()
+        return wt_path
 
     def _seed_uncommitted(self, worktree_path: str) -> None:
         """Copy the workspace's uncommitted changes into a fresh worktree.
@@ -158,7 +164,9 @@ class WorktreeManager:
         finally:
             self.remove(path)
 
-    def promote(self, src_worktree: str, dest_workspace: str) -> list[str]:
+    def promote(self, src_worktree: str, dest_workspace: str,
+                expected_digest: Optional[str] = None,
+                policy: Optional[WritePolicy] = None) -> list[str]:
         """Copy the winning attempt's changed files into the main workspace.
 
         Selection, never merging: only files that differ from HEAD in the
@@ -175,6 +183,12 @@ class WorktreeManager:
         dest_workspace:
             Path to the main workspace that should receive the promoted
             files.
+        expected_digest:
+            The gate verdict's candidate binding (``GatesResult.candidate_digest``).
+            When given, the files are read once, their binding is checked against
+            it, and exactly the bytes that were checked are written: a candidate
+            changed after its gate passed (even back to the same bytes) is refused
+            and nothing is promoted.  An empty binding is always refused.
 
         Returns
         -------
@@ -185,34 +199,53 @@ class WorktreeManager:
         ------
         WorktreeError
             If ``git status`` fails in *src_worktree*, a promoted path would
-            escape *dest_workspace*, or a file cannot be copied.
+            escape *dest_workspace*, a file cannot be copied, or the candidate
+            no longer matches *expected_digest*.
         """
         src = os.path.abspath(src_worktree)
         dest = os.path.abspath(dest_workspace)
+        write_policy = policy if policy is not None else WritePolicy()
+        baseline = self._git_Baseline.get(
+            os.path.normcase(os.path.realpath(src)), self._init_git_baseline
+        )
+        if self._git_config_digest() != baseline:
+            raise WorktreeError(
+                "refusing to promote: shared .git/config or .git/hooks was modified during the attempt"
+            )
         try:
-            changed = changed_paths(src)
+            # Deletions/dirs are never propagated; symlinks are never followed
+            # (a link out of the worktree would exfiltrate its target's contents).
+            files = candidate_files(src)
         except subprocess.CalledProcessError as exc:
             detail = (exc.stderr or "").strip() or str(exc)
             raise WorktreeError(f"could not read worktree status: {detail}") from exc
         except (subprocess.TimeoutExpired, OSError) as exc:
             raise WorktreeError(f"could not read worktree status: {exc}") from exc
+        if expected_digest is not None and not digest_matches(expected_digest, digest_of(files)):
+            raise WorktreeError("candidate changed after its gate passed; the earlier verdict is "
+                                "stale and nothing was promoted (fail closed)")
+
+        for rel, _content, _mtime_ns in files:
+            ok, reason = write_policy.check_path(rel)
+            if not ok:
+                raise WorktreeError(
+                    f"refusing to promote path rejected by WritePolicy {rel!r}: {reason}"
+                )
+            target = os.path.abspath(os.path.join(dest, rel))
+            if not contained(dest, target):
+                raise WorktreeError(f"promotion path escapes workspace: {rel!r}")
 
         promoted: list[str] = []
-        for rel in changed:
-            if not rel or rel.startswith(".loop-engineer/") or rel == ".loop-engineer":
-                continue
-            src_path = os.path.join(src, rel)
-            # Deletions/dirs are never propagated; symlinks are never followed
-            # (a link out of the worktree would exfiltrate its target's contents).
-            if os.path.islink(src_path) or not os.path.isfile(src_path):
-                continue
+        for rel, content, _mtime_ns in files:
             target = os.path.abspath(os.path.join(dest, rel))
             # Resolved through links: the user's workspace may hold a junction the worktree did not.
             if not contained(dest, target):
                 raise WorktreeError(f"promotion path escapes workspace: {rel!r}")
             try:
                 os.makedirs(os.path.dirname(target), exist_ok=True)
-                shutil.copy2(src_path, target)
+                with open(target, "wb") as handle:
+                    handle.write(content)
+                shutil.copystat(os.path.join(src, rel), target)
             except OSError as exc:
                 raise WorktreeError(f"could not promote {rel!r}: {exc}") from exc
             promoted.append(rel)
@@ -221,6 +254,43 @@ class WorktreeManager:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _git_config_digest(self) -> str:
+        """Compute a deterministic SHA-256 digest of ``.git/config`` and ``.git/hooks/``."""
+        hasher = hashlib.sha256()
+        git_dir = os.path.join(self._repo_root, ".git")
+        config_path = os.path.join(git_dir, "config")
+        if os.path.isfile(config_path) and not os.path.islink(config_path):
+            try:
+                with open(config_path, "rb") as handle:
+                    data = handle.read()
+                hasher.update(b"config\0" + data + b"\0")
+            except OSError:
+                hasher.update(b"config:unreadable\0")
+        hooks_dir = os.path.join(git_dir, "hooks")
+        if os.path.isdir(hooks_dir):
+            hook_files: list[str] = []
+            for root, _dirs, filenames in os.walk(hooks_dir):
+                for fname in filenames:
+                    full = os.path.join(root, fname)
+                    rel = os.path.relpath(full, git_dir).replace("\\", "/")
+                    hook_files.append(rel)
+            for rel in sorted(hook_files):
+                full = os.path.join(git_dir, rel)
+                if os.path.islink(full):
+                    try:
+                        target = os.readlink(full).encode("utf-8", errors="surrogateescape")
+                    except OSError:
+                        target = b"?"
+                    hasher.update(b"symlink:" + rel.encode("utf-8") + b"\0" + target + b"\0")
+                elif os.path.isfile(full):
+                    try:
+                        with open(full, "rb") as handle:
+                            data = handle.read()
+                        hasher.update(b"hook:" + rel.encode("utf-8") + b"\0" + data + b"\0")
+                    except OSError:
+                        hasher.update(b"hook:unreadable:" + rel.encode("utf-8") + b"\0")
+        return hasher.hexdigest()
 
     def _git(self, *args: str, timeout: int = 60) -> subprocess.CompletedProcess:
         """Run a ``git -C <repo_root> <args>`` command.

@@ -9,6 +9,8 @@ import json
 import logging
 import os
 
+from .workspace import write_text_unlinked
+
 logger = logging.getLogger(__name__)
 
 # Default entry shape — successes start at 0, not stale.
@@ -77,8 +79,7 @@ class Playbook:
             parent = os.path.dirname(self.path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            with open(self.path, "w", encoding="utf-8") as fh:
-                json.dump(self._lessons, fh, indent=2)
+            write_text_unlinked(self.path, json.dumps(self._lessons, indent=2))
         except OSError as exc:
             logger.warning("playbook: could not save %s (%s)", self.path, exc)
 

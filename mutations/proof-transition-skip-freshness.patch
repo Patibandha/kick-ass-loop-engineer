@@ -1,0 +1,12 @@
+diff --git a/src/kickass_loop_engineer/workspace.py b/src/kickass_loop_engineer/workspace.py
+--- a/src/kickass_loop_engineer/workspace.py
++++ b/src/kickass_loop_engineer/workspace.py
+@@ -197,7 +197,7 @@ def digest_matches(bound: Optional[str], current: str) -> bool:
+ 
+     An empty binding (the candidate could not be read when its gate ran) never matches: fail closed.
+     """
+-    return bool(bound) and current == bound
++    return True
+ 
+ class WorkspaceError(RuntimeError):
+     """Raised when the workspace cannot be inspected or restored.

@@ -88,15 +88,38 @@ def test_every_mutation_patch_applies_to_head():
             assert checked.returncode == 0, f"{patch.name} no longer applies: {checked.stderr.strip()}"
 
 
-def test_the_three_required_families_have_a_patch():
+def test_the_required_families_have_a_patch():
     names = [p.name for p in cm.find_patches(MUTATIONS)]
-    for family in ("gate-", "isolation-", "proof-"):
+    for family in ("gate-", "isolation-", "proof-", "proof-transition-"):
         assert any(n.startswith(family) for n in names), family
 
 
 def test_every_patch_name_maps_to_a_marker():
     for patch in cm.find_patches(MUTATIONS):
         assert cm.marker_for(patch).startswith("guardrail_")
+
+
+def test_the_longest_matching_family_picks_the_marker():
+    assert cm.marker_for(Path("proof-transition-skip-freshness.patch")) == "guardrail_proof_transition"
+    assert cm.marker_for(Path("proof-skip-revert.patch")) == "guardrail_proof"
+    assert cm.marker_for(Path("proof-authority-x.patch")) == "guardrail_proof_authority"
+    assert cm.marker_for(Path("proof-transitional.patch")) == "guardrail_proof"
+    assert cm.marker_for(Path("confine-skip.patch")) == "guardrail_gate_confinement"
+
+
+def test_a_host_limited_family_applies_only_on_its_hosts():
+    assert cm.applies_here(Path("confine-skip.patch"), "nt") is True
+    assert cm.applies_here(Path("confine-skip.patch"), "posix") is False
+    assert cm.applies_here(Path("gate-always-true.patch"), "posix") is True
+
+
+def test_a_mutation_whose_code_never_runs_here_is_not_applicable_not_a_failure(tiny, tmp_path, capsys, monkeypatch):
+    repo, caught, _ = tiny
+    monkeypatch.setitem(cm.FAMILY_HOSTS, "gate", ("no-such-host",))
+    _save(tmp_path / "muts", "gate-always-true.patch", caught)
+    assert cm.main(["--repo", str(repo), "--mutations", str(tmp_path / "muts")]) == 0
+    out = capsys.readouterr().out
+    assert "[NOT-APPLICABLE] gate-always-true.patch" in out
 
 
 def test_an_unknown_family_is_an_error():

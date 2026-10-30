@@ -22,9 +22,10 @@ def test_ordinary_gate_output_is_left_alone():
 
 
 @pytest.mark.parametrize("name", ["OPENAI_API_KEY", "GITHUB_TOKEN", "OLLAMA_API_KEY", "MY_SERVICE_SECRET",
-                                  "DB_PASSWORD", "TYPESAFE_API_KEY"])
+                                  "DB_PASSWORD", "TYPESAFE_API_KEY", "AWS_SECRET_ACCESS_KEY"])
 def test_a_credential_variable_never_reaches_a_gate(name, monkeypatch, tmp_path):
     calls = []
+    monkeypatch.setattr("kickass_loop_engineer.confine.CONFINEMENT_AVAILABLE", False)
     monkeypatch.setenv(name, "value-that-must-not-leak")
     monkeypatch.setattr(subprocess, "run",
                         lambda argv, **kw: calls.append(kw) or subprocess.CompletedProcess(argv, 0, "", ""))
