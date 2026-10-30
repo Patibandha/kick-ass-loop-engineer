@@ -16,8 +16,11 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import subprocess
+import sys
 import tempfile
+from typing import NamedTuple, Optional, Sequence
 
 #: True only where gates can be confined (Windows, through integrity levels).
 CONFINEMENT_AVAILABLE = os.name == "nt"
@@ -26,6 +29,125 @@ CONFINEMENT_AVAILABLE = os.name == "nt"
 RUN_STATE_DIR = ".loop-engineer"
 
 _LOW_INTEGRITY_SID = "S-1-16-4096"
+
+
+class ConfinedResult(NamedTuple):
+    """Outcome of ``run_confined``: unpacks as ``(completed, confined)`` and exposes attributes."""
+
+    completed: subprocess.CompletedProcess
+    confined: bool
+
+    @property
+    def returncode(self) -> int:
+        return self.completed.returncode
+
+    @property
+    def stdout(self) -> str:
+        return self.completed.stdout
+
+    @property
+    def stderr(self) -> str:
+        return self.completed.stderr
+
+
+def _seatbelt_profile(cwd: str, scratch: str) -> str:
+    """Generate an Apple Seatbelt (``sandbox-exec``) SBPL profile confining writes to *cwd* and *scratch*."""
+    state_dir = f"{cwd.rstrip('/')}/{RUN_STATE_DIR}"
+    return (
+        "(version 1) "
+        "(allow default) "
+        "(deny network*) "
+        '(deny file-write* (subpath "/")) '
+        f'(allow file-write* (subpath "{cwd}")) '
+        f'(allow file-write* (subpath "{scratch}")) '
+        f'(deny file-write* (subpath "{state_dir}"))'
+    )
+
+
+def _bwrap_argv(argv: Sequence[str], cwd: str, scratch: str) -> list[str]:
+    """Build the ``bwrap`` command line confining writes to *cwd* and *scratch*."""
+    cmd: list[str] = [
+        "bwrap",
+        "--ro-bind", "/", "/",
+        "--bind", cwd, cwd,
+    ]
+    state = os.path.join(cwd, RUN_STATE_DIR)
+    if os.path.exists(state):
+        cmd.extend(["--ro-bind", state, state])
+    cmd.extend([
+        "--bind", scratch, "/tmp",
+        "--unshare-net",
+        "--die-with-parent",
+        "--chdir", cwd,
+        *argv,
+    ])
+    return cmd
+
+
+def _detect_posix_backend() -> Optional[str]:
+    """Return ``'seatbelt'`` on macOS or ``'bwrap'`` on Linux when the binary is on PATH, else ``None``."""
+    if sys.platform == "darwin" and shutil.which("sandbox-exec"):
+        return "seatbelt"
+    if sys.platform.startswith("linux") and shutil.which("bwrap"):
+        return "bwrap"
+    return None
+
+
+def _run_posix_confined(
+    argv: Sequence[str],
+    *,
+    cwd: str,
+    env: dict,
+    timeout: float,
+    backend: str,
+) -> ConfinedResult:
+    """Execute *argv* under ``sandbox-exec`` or ``bwrap`` while protecting ``.loop-engineer``."""
+    private = tempfile.mkdtemp(prefix="le-confine-")
+    state = os.path.join(cwd, RUN_STATE_DIR)
+    state_existed = os.path.isdir(state)
+    old_mode: Optional[int] = None
+    try:
+        scratch = os.path.join(private, "tmp")
+        os.makedirs(os.path.join(scratch, "pycache"), exist_ok=True)
+        if state_existed:
+            try:
+                old_mode = stat.S_IMODE(os.stat(state).st_mode)
+                os.chmod(state, 0o555)
+            except OSError:
+                old_mode = None
+        if backend == "seatbelt":
+            profile = _seatbelt_profile(cwd, scratch)
+            cmd = ["sandbox-exec", "-p", profile, *argv]
+        elif backend == "bwrap":
+            cmd = _bwrap_argv(argv, cwd, scratch)
+        else:
+            raise ConfinementError(f"unsupported POSIX confinement backend: {backend!r}")
+        confined_env = dict(
+            env,
+            TEMP=scratch,
+            TMP=scratch,
+            TMPDIR=scratch,
+            PYTHONPYCACHEPREFIX=os.path.join(scratch, "pycache"),
+        )
+        completed = subprocess.run(
+            cmd,
+            cwd=cwd,
+            env=confined_env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        return ConfinedResult(completed, True)
+    finally:
+        try:
+            if state_existed and old_mode is not None:
+                try:
+                    os.chmod(state, old_mode)
+                except OSError:
+                    pass
+        finally:
+            shutil.rmtree(private, ignore_errors=True)
 
 
 class ConfinementError(OSError):
@@ -242,6 +364,10 @@ def run_confined(argv: list, *, cwd: str, env: dict,
                                    timeout=timeout, check=False)
         return completed, False
 
+    posix_backend = _detect_posix_backend()
+    if posix_backend is not None:
+        return _run_posix_confined(argv, cwd=cwd, env=env, timeout=timeout, backend=posix_backend)
+
     private = tempfile.mkdtemp(prefix="le-confine-")
     labelled = False
     try:
@@ -254,7 +380,7 @@ def run_confined(argv: list, *, cwd: str, env: dict,
         if os.path.isdir(state):
             _label(state, "medium")
         confined_env = dict(env, TEMP=scratch, TMP=scratch, PYTHONPYCACHEPREFIX=os.path.join(scratch, "pycache"))
-        return _run_low(argv, cwd, confined_env, timeout, private), True
+        return ConfinedResult(_run_low(argv, cwd, confined_env, timeout, private), True)
     finally:
         try:
             if labelled:
