@@ -79,3 +79,9 @@ goes into its own scoped project; nothing here changes engine behavior.
   **Fixed on Windows** (2026-10-28): every gate runs as a low-integrity process that can write only inside its
   worktree and a private temp folder (`confine.run_confined`); a failed confinement step fails the gate. **Open on
   Linux and macOS**: there gates run unconfined, as the owner decided, and every gate's evidence says `unconfined`.
+
+## Commercial Kernel Extensions (v3.5.0+)
+
+- **Cross-Platform POSIX Confinement (`confine.py`)**: Extends PA-2 Windows Low-Integrity (`S-1-16-4096`) gate confinement with macOS Apple Seatbelt (`sandbox-exec` via `_seatbelt_profile`) and Linux Bubblewrap (`bwrap` via `_bwrap_argv`), enforcing read-only root, read-write workspace, read-only `.loop-engineer` run-state protection, isolated `/tmp`, and network isolation.
+- **Scoped Fast-Path Red Verification (`verifier.py`)**: Adds `scoped_gate_command(gate_command, test_files)` and `ProofOfTestVerifier(fast_red_scope=True)` to scope `red_when_reverted` to changed test files on large test suites while running the full gate on `green_before` and `green_after`.
+- **SLSA Level 3 / In-Toto Attestation (`attestation.py`)**: Adds `create_attestation` and `verify_attestation` emitting signed `https://in-toto.io/Statement/v1` receipts binding `candidate_digest`, `builder`, `reviewer`, `proof_of_test`, and `confined` status.

@@ -34,11 +34,11 @@ import logging
 import os
 import subprocess
 from dataclasses import dataclass, field, replace
-from typing import Optional
+from typing import Optional, Sequence
 
 from .archmap import ARCHMAP_RELPATH
 from .gates import GATES
-from .guardrails import VerificationPolicy
+from .guardrails import _SHELL_METACHARACTERS, VerificationPolicy
 from .workspace import candidate_digest, digest_matches
 
 logger = logging.getLogger(__name__)
@@ -97,6 +97,38 @@ class _GateDidNotRun(RuntimeError):
 
 
 _pending_stash_sha: dict[str, list[str]] = {}
+_pending_red_gate_cmd: dict[str, str] = {}
+
+_PYTEST_SCOPED_PREFIXES = ("pytest", "python -m pytest", "python3 -m pytest")
+
+
+def scoped_gate_command(gate_command: str, test_files: Sequence[str]) -> str:
+    """Append safe relative test file paths to a pytest *gate_command* for fast-path red verification."""
+    stripped = (gate_command or "").strip()
+    if not stripped or not test_files:
+        return gate_command
+    if not any(stripped == p or stripped.startswith(p + " ") for p in _PYTEST_SCOPED_PREFIXES):
+        return gate_command
+    safe_tests: list[str] = []
+    for raw in test_files:
+        if not isinstance(raw, str):
+            return gate_command
+        norm = raw.replace("\\", "/").strip()
+        if (
+            not norm
+            or os.path.isabs(raw)
+            or norm.startswith(("/", "-"))
+            or ":" in norm
+            or ".." in norm.split("/")
+            or any(meta in norm for meta in _SHELL_METACHARACTERS)
+            or any(ch.isspace() for ch in norm)
+        ):
+            return gate_command
+        if _is_test_path(norm) and not _is_test_support(norm) and norm not in safe_tests:
+            safe_tests.append(norm)
+    if not safe_tests:
+        return gate_command
+    return f"{stripped} {' '.join(safe_tests)}"
 
 
 def _gate_passes(gate_cmd: str, workspace: str, policy: VerificationPolicy) -> bool:
@@ -109,7 +141,8 @@ def _gate_passes(gate_cmd: str, workspace: str, policy: VerificationPolicy) -> b
     box = _pending_stash_sha.pop(workspace, None)
     if box is not None:
         box.append(_git(workspace, "rev-parse", "refs/stash").stdout.strip())
-    result = policy.run(gate_cmd, cwd=workspace)
+    effective_cmd = _pending_red_gate_cmd.pop(workspace, None) or gate_cmd
+    result = policy.run(effective_cmd, cwd=workspace)
     if result.error:
         raise _GateDidNotRun(result.error)
     return result.passed
@@ -300,7 +333,7 @@ def _summarize(paths: list[str], limit: int = 5) -> str:
     return f"{shown}, +{remainder} more" if remainder > 0 else shown
 
 
-def prove(gate_cmd: str, workspace: str, policy: Optional[VerificationPolicy] = None) -> ProofRecord:
+def prove(gate_cmd: str, workspace: str, policy: Optional[VerificationPolicy] = None, fast_red_scope: bool = False) -> ProofRecord:
     """Prove a gate's pass is real by reverting the change's non-test files.
 
     Runs the gate green->red->green around a ``git stash`` of every changed
@@ -371,6 +404,12 @@ def prove(gate_cmd: str, workspace: str, policy: Optional[VerificationPolicy] = 
         unstashable = _unstashable(workspace, entries, to_revert)
         stash_sha: list[str] = []
         _pending_stash_sha[workspace] = stash_sha
+        if fast_red_scope:
+            test_modules = [
+                changed for changed in dict.fromkeys(c for _code, c in entries)
+                if _is_test_path(changed) and not _is_test_support(changed)
+            ]
+            _pending_red_gate_cmd[workspace] = scoped_gate_command(gate_cmd, test_modules)
         stashed: Optional[list[str]] = None  # None: the whole tree was stashed
         if unstashable:
             # git cannot scope a stash to a staged deletion or a rename source,
@@ -675,3 +714,50 @@ def run_gates(specs, workspace: str, policy: Optional[VerificationPolicy] = None
             logger.warning("cannot bind the gate verdict in %s to its candidate: %s", workspace, exc)
             result.candidate_digest = ""
     return result
+
+
+class ProofOfTestVerifier:
+    """Verifier wrapper supporting optional ``fast_red_scope`` for scoped ``red_when_reverted`` pytest runs."""
+
+    def __init__(
+        self,
+        policy: Optional[VerificationPolicy] = None,
+        fast_red_scope: bool = False,
+    ) -> None:
+        if isinstance(policy, bool):
+            fast_red_scope = policy
+            policy = None
+        self.policy = policy or VerificationPolicy()
+        self.fast_red_scope = bool(fast_red_scope)
+
+    def prove(
+        self,
+        gate_cmd: str,
+        workspace: str,
+        policy: Optional[VerificationPolicy] = None,
+    ) -> ProofRecord:
+        """Run green -> red -> green proof-of-test using ``fast_red_scope`` when enabled."""
+        return prove(
+            gate_cmd,
+            workspace,
+            policy=policy or self.policy,
+            fast_red_scope=self.fast_red_scope,
+        )
+
+    def verify(
+        self,
+        gate_cmd: str,
+        workspace: str,
+        policy: Optional[VerificationPolicy] = None,
+    ) -> ProofRecord:
+        """Alias for :meth:`prove`."""
+        return self.prove(gate_cmd, workspace, policy=policy)
+
+    def __call__(
+        self,
+        gate_cmd: str,
+        workspace: str,
+        policy: Optional[VerificationPolicy] = None,
+    ) -> ProofRecord:
+        return self.prove(gate_cmd, workspace, policy=policy)
+
