@@ -78,5 +78,6 @@ goes into its own scoped project; nothing here changes engine behavior.
 - **CRITICAL FINDING PA-2** (attacks B, D): gate writes are not confined to the worktree. The gate can write a success
   `pipeline.json` into the main workspace that `next` trusts, and can write any file the engine's user can.
   **Fixed on Windows** (2026-10-28): every gate runs as a low-integrity process that can write only inside its
-  worktree and a private temp folder (`confine.run_confined`); a failed confinement step fails the gate. **Open on
-  Linux and macOS**: there gates run unconfined, as the owner decided, and every gate's evidence says `unconfined`.
+  worktree and a private temp folder (`confine.run_confined`); the final gate runs in a throwaway worktree, never
+  in the workspace; a failed confinement step fails the gate. **Open on Linux and macOS**: there gates run
+  unconfined (no sandbox ships in 3.5.0), and every gate's evidence says `unconfined`.
