@@ -48,7 +48,7 @@ from .terminal import RunOutcome, TerminalState
 from .verifier import (OBSERVER_CAP, EvidenceRecord, GatesResult, bound_digest, run_gates, still_fresh,
                        support_only_note)
 from .visual import visual_critique
-from .workspace import Workspace, write_text_unlinked
+from .workspace import Workspace, git_argv, write_text_unlinked
 from .worktree import WorktreeError
 
 logger = logging.getLogger("kickass_loop_engineer.orchestrator")
@@ -75,7 +75,7 @@ def _is_git_repo(workspace: str) -> bool:
     """
     try:
         result = subprocess.run(
-            ["git", "-C", workspace, "rev-parse", "--is-inside-work-tree"],
+            git_argv("-C", workspace, "rev-parse", "--is-inside-work-tree"),
             capture_output=True, text=True, timeout=30,
         )
         return result.returncode == 0
@@ -570,7 +570,7 @@ class Orchestrator:
             return True
         try:
             status = subprocess.run(
-                ["git", "status", "--porcelain", "--", self._repro_path],
+                git_argv("status", "--porcelain", "--ignore-submodules=all", "--", self._repro_path),
                 cwd=root, capture_output=True, text=True,
                 check=True, timeout=60)
             if status.stdout.strip():
@@ -582,7 +582,7 @@ class Orchestrator:
                     self.run_id, "reproduce", "tamper_detected", "warn",
                     {"path": self._repro_path, "root": root}))
             subprocess.run(
-                ["git", "checkout", "--", self._repro_path],
+                git_argv("checkout", "--", self._repro_path),
                 cwd=root, capture_output=True, text=True,
                 check=True, timeout=60)
             return True

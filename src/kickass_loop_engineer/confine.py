@@ -19,21 +19,19 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
+import time
+from typing import Optional
+
+from .low_integrity import ConfinementError, run_low
 
 #: True only where gates can be confined (Windows, through integrity levels).
 CONFINEMENT_AVAILABLE = os.name == "nt"
 
 #: Run-state folder inside a working folder that a confined gate must never write.
 RUN_STATE_DIR = ".loop-engineer"
-
-_LOW_INTEGRITY_SID = "S-1-16-4096"
-
-
-class ConfinementError(OSError):
-    """A confinement step failed (labelling a folder, building the low-integrity token): the gate must fail."""
-
 
 def _label(path: str, level: str) -> None:
     """Give *path* (a folder) an inheritable ``level`` integrity label with ``icacls``.
@@ -52,175 +50,6 @@ def _label(path: str, level: str) -> None:
         raise ConfinementError(f"icacls could not label {path} {level}: {detail}")
 
 
-def _environment_block(env: dict) -> str:
-    """A Unicode environment block for ``CreateProcessW``: sorted ``NAME=value`` entries, double-NUL ended."""
-    entries = [f"{k}={v}" for k, v in sorted(env.items(), key=lambda item: item[0].upper())]
-    return "\0".join(entries) + "\0\0"
-
-
-def _win32():
-    """The Win32 functions the launcher calls, each with ``argtypes``/``restype`` declared (64-bit needs them)."""
-    import ctypes
-    from ctypes import wintypes
-
-    class SidAndAttributes(ctypes.Structure):
-        _fields_ = [("Sid", ctypes.c_void_p), ("Attributes", wintypes.DWORD)]
-
-    class TokenMandatoryLabel(ctypes.Structure):
-        _fields_ = [("Label", SidAndAttributes)]
-
-    class StartupInfo(ctypes.Structure):
-        _fields_ = [("cb", wintypes.DWORD), ("lpReserved", wintypes.LPWSTR), ("lpDesktop", wintypes.LPWSTR),
-                    ("lpTitle", wintypes.LPWSTR), ("dwX", wintypes.DWORD), ("dwY", wintypes.DWORD),
-                    ("dwXSize", wintypes.DWORD), ("dwYSize", wintypes.DWORD),
-                    ("dwXCountChars", wintypes.DWORD), ("dwYCountChars", wintypes.DWORD),
-                    ("dwFillAttribute", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
-                    ("wShowWindow", wintypes.WORD), ("cbReserved2", wintypes.WORD),
-                    ("lpReserved2", ctypes.c_void_p), ("hStdInput", wintypes.HANDLE),
-                    ("hStdOutput", wintypes.HANDLE), ("hStdError", wintypes.HANDLE)]
-
-    class ProcessInformation(ctypes.Structure):
-        _fields_ = [("hProcess", wintypes.HANDLE), ("hThread", wintypes.HANDLE),
-                    ("dwProcessId", wintypes.DWORD), ("dwThreadId", wintypes.DWORD)]
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
-
-    def declare(fn, restype, *argtypes):
-        fn.restype, fn.argtypes = restype, list(argtypes)
-        return fn
-
-    handle_p = ctypes.POINTER(wintypes.HANDLE)
-    api = {
-        "GetCurrentProcess": declare(kernel32.GetCurrentProcess, wintypes.HANDLE),
-        "CloseHandle": declare(kernel32.CloseHandle, wintypes.BOOL, wintypes.HANDLE),
-        "LocalFree": declare(kernel32.LocalFree, ctypes.c_void_p, ctypes.c_void_p),
-        "WaitForSingleObject": declare(kernel32.WaitForSingleObject, wintypes.DWORD,
-                                       wintypes.HANDLE, wintypes.DWORD),
-        "GetExitCodeProcess": declare(kernel32.GetExitCodeProcess, wintypes.BOOL,
-                                      wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)),
-        "TerminateProcess": declare(kernel32.TerminateProcess, wintypes.BOOL, wintypes.HANDLE, wintypes.UINT),
-        "OpenProcessToken": declare(advapi32.OpenProcessToken, wintypes.BOOL,
-                                    wintypes.HANDLE, wintypes.DWORD, handle_p),
-        "DuplicateTokenEx": declare(advapi32.DuplicateTokenEx, wintypes.BOOL, wintypes.HANDLE, wintypes.DWORD,
-                                    ctypes.c_void_p, ctypes.c_int, ctypes.c_int, handle_p),
-        "ConvertStringSidToSidW": declare(advapi32.ConvertStringSidToSidW, wintypes.BOOL,
-                                          wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_void_p)),
-        "GetLengthSid": declare(advapi32.GetLengthSid, wintypes.DWORD, ctypes.c_void_p),
-        "SetTokenInformation": declare(advapi32.SetTokenInformation, wintypes.BOOL, wintypes.HANDLE,
-                                       ctypes.c_int, ctypes.c_void_p, wintypes.DWORD),
-        "CreateProcessAsUserW": declare(advapi32.CreateProcessAsUserW, wintypes.BOOL, wintypes.HANDLE,
-                                        wintypes.LPCWSTR, wintypes.LPWSTR, ctypes.c_void_p, ctypes.c_void_p,
-                                        wintypes.BOOL, wintypes.DWORD, ctypes.c_void_p, wintypes.LPCWSTR,
-                                        ctypes.POINTER(StartupInfo), ctypes.POINTER(ProcessInformation)),
-    }
-    types = {"SidAndAttributes": SidAndAttributes, "TokenMandatoryLabel": TokenMandatoryLabel,
-             "StartupInfo": StartupInfo, "ProcessInformation": ProcessInformation}
-    return ctypes, wintypes, api, types
-
-
-def _failed(ctypes, call: str, error=OSError) -> OSError:
-    """An *error* naming the Win32 *call* that failed and its last error (``OSError`` maps it to a subclass)."""
-    code = ctypes.get_last_error()
-    return error(code, f"{call} failed: {ctypes.FormatError(code).strip()}")
-
-
-def _low_integrity_token(ctypes, wintypes, api, types):
-    """A primary copy of this process's token with its integrity level set to low.
-
-    Raises:
-        ConfinementError: When any token call fails.
-    """
-    token_duplicate, token_query, token_adjust_default, token_assign_primary = 0x0002, 0x0008, 0x0080, 0x0001
-    security_impersonation, token_primary, token_integrity_level, se_group_integrity = 2, 1, 25, 0x20
-    own = wintypes.HANDLE()
-    access = token_duplicate | token_query | token_adjust_default | token_assign_primary
-    if not api["OpenProcessToken"](api["GetCurrentProcess"](), access, ctypes.byref(own)):
-        raise _failed(ctypes, "OpenProcessToken", ConfinementError)
-    low = wintypes.HANDLE()
-    sid = ctypes.c_void_p()
-    try:
-        if not api["DuplicateTokenEx"](own, 0, None, security_impersonation, token_primary, ctypes.byref(low)):
-            raise _failed(ctypes, "DuplicateTokenEx", ConfinementError)
-        if not api["ConvertStringSidToSidW"](_LOW_INTEGRITY_SID, ctypes.byref(sid)):
-            raise _failed(ctypes, "ConvertStringSidToSidW", ConfinementError)
-        label = types["TokenMandatoryLabel"]()
-        label.Label.Sid, label.Label.Attributes = sid.value, se_group_integrity
-        size = ctypes.sizeof(label) + api["GetLengthSid"](sid)
-        if not api["SetTokenInformation"](low, token_integrity_level, ctypes.byref(label), size):
-            raise _failed(ctypes, "SetTokenInformation", ConfinementError)
-    except OSError:
-        if low.value:
-            api["CloseHandle"](low)
-        raise
-    finally:
-        if sid.value:
-            api["LocalFree"](sid)
-        api["CloseHandle"](own)
-    return low
-
-
-def _inheritable_handle(stream) -> int:
-    """The OS handle behind an open file, made inheritable so the child can write to it."""
-    import msvcrt
-
-    handle = msvcrt.get_osfhandle(stream.fileno())
-    os.set_handle_inheritable(handle, True)
-    return handle
-
-
-def _run_low(argv: list, cwd: str, env: dict, timeout: float, private: str) -> subprocess.CompletedProcess:
-    """Launch *argv* at low integrity with its output in files under *private*; wait, read and return it.
-
-    Raises:
-        subprocess.TimeoutExpired: When the process outlives *timeout* (it is terminated first).
-        ConfinementError: When the low-integrity token cannot be built.
-        OSError: When the process cannot be created or waited on.
-    """
-    ctypes, wintypes, api, types = _win32()
-    startf_usestdhandles, create_no_window, create_unicode_environment = 0x100, 0x08000000, 0x400
-    wait_object_0, wait_timeout = 0x0, 0x102
-    command_line = subprocess.list2cmdline(argv)
-    out_path, err_path = os.path.join(private, "stdout"), os.path.join(private, "stderr")
-    token = _low_integrity_token(ctypes, wintypes, api, types)
-    try:
-        with open(out_path, "wb") as out, open(err_path, "wb") as err, open(os.devnull, "rb") as null:
-            info = types["StartupInfo"]()
-            info.cb = ctypes.sizeof(info)
-            info.dwFlags = startf_usestdhandles
-            info.hStdInput = _inheritable_handle(null)
-            info.hStdOutput = _inheritable_handle(out)
-            info.hStdError = _inheritable_handle(err)
-            process = types["ProcessInformation"]()
-            block = ctypes.create_unicode_buffer(_environment_block(env))
-            buffer = ctypes.create_unicode_buffer(command_line)
-            if not api["CreateProcessAsUserW"](token, None, buffer, None, None, True,
-                                               create_no_window | create_unicode_environment,
-                                               ctypes.cast(block, ctypes.c_void_p), cwd,
-                                               ctypes.byref(info), ctypes.byref(process)):
-                raise _failed(ctypes, "CreateProcessAsUserW")
-        try:
-            waited = api["WaitForSingleObject"](process.hProcess, max(0, int(timeout * 1000)))
-            if waited == wait_timeout:
-                api["TerminateProcess"](process.hProcess, 1)
-                api["WaitForSingleObject"](process.hProcess, 10_000)
-                raise subprocess.TimeoutExpired(argv, timeout)
-            if waited != wait_object_0:
-                raise _failed(ctypes, "WaitForSingleObject")
-            code = wintypes.DWORD()
-            if not api["GetExitCodeProcess"](process.hProcess, ctypes.byref(code)):
-                raise _failed(ctypes, "GetExitCodeProcess")
-        finally:
-            api["CloseHandle"](process.hThread)
-            api["CloseHandle"](process.hProcess)
-    finally:
-        api["CloseHandle"](token)
-    returncode = ctypes.c_int32(code.value).value
-    # Decoded as ``subprocess.run(text=True)`` would: the locale encoding, universal newlines.
-    with open(out_path, errors="replace") as out, open(err_path, errors="replace") as err:
-        return subprocess.CompletedProcess(argv, returncode, out.read(), err.read())
-
-
 def _git_pointer(cwd: str) -> Optional[bytes]:
     """The bytes of ``<cwd>/.git`` when it is a plain file (a linked worktree's pointer), else ``None``."""
     path = os.path.join(cwd, ".git")
@@ -230,30 +59,50 @@ def _git_pointer(cwd: str) -> Optional[bytes]:
         return handle.read()
 
 
+def _write_pointer(path: str, pointer: bytes) -> None:
+    """Replace whatever the gate left at *path* (a read-only file, a folder, a junction) with *pointer*."""
+    if getattr(os.path, "isjunction", lambda _path: False)(path):  # Python 3.12+
+        os.rmdir(path)
+    elif os.path.isdir(path) and not os.path.islink(path):
+        for root, _dirs, files in os.walk(path):
+            for name in files:
+                os.chmod(os.path.join(root, name), stat.S_IWRITE)
+        shutil.rmtree(path)
+    elif os.path.lexists(path):
+        os.chmod(path, stat.S_IWRITE)  # a read-only file refuses os.remove on Windows
+        os.remove(path)
+    with open(path, "wb") as handle:
+        handle.write(pointer)
+
+
 def _restore_git_pointer(cwd: str, pointer: bytes) -> bool:
     """Put *pointer* back as ``<cwd>/.git`` if the gate changed it; True when it had to.
 
     The pointer sits inside the gate's writable folder. Redirected to a gitdir the gate built, the engine's next
-    ``git status`` there would run that gitdir's ``core.fsmonitor`` or hooks at the engine's own integrity.
+    git call there would read that gitdir's config at the engine's own integrity. When it cannot be put back, the
+    folder is quarantined (renamed aside) so no engine git call ever runs in it again.
 
     Raises:
-        ConfinementError: When the pointer cannot be put back.
+        ConfinementError: When the pointer cannot be read or put back (after quarantining the folder).
     """
-    if _git_pointer(cwd) == pointer:
-        return False
     path = os.path.join(cwd, ".git")
     try:
-        if getattr(os.path, "isjunction", lambda _path: False)(path):  # Python 3.12+
-            os.rmdir(path)
-        elif os.path.isdir(path) and not os.path.islink(path):
-            shutil.rmtree(path)
-        elif os.path.lexists(path):
-            os.remove(path)
-        with open(path, "wb") as handle:
-            handle.write(pointer)
+        if _git_pointer(cwd) == pointer:
+            return False
+        _write_pointer(path, pointer)
+        if _git_pointer(cwd) == pointer:
+            return True
+        error: Exception = OSError("the restored pointer does not match")
     except OSError as exc:
-        raise ConfinementError(f"gate changed {path} and it could not be restored: {exc}") from exc
-    return True
+        error = exc
+    quarantine = f"{cwd}.quarantined-{os.getpid()}-{time.monotonic_ns()}"
+    try:
+        os.rename(cwd, quarantine)
+    except OSError as exc:
+        raise ConfinementError(f"gate changed {path}, it could not be restored ({error}) and {cwd} could not be "
+                               f"quarantined ({exc}); never run git there") from exc
+    raise ConfinementError(f"gate changed {path} and it could not be restored ({error}); quarantined the folder "
+                           f"as {quarantine}") from error
 
 
 def run_confined(argv: list, *, cwd: str, env: dict,
@@ -305,7 +154,7 @@ def _run(argv: list, *, cwd: str, env: dict, timeout: float) -> tuple[subprocess
         if os.path.isdir(state):
             _label(state, "medium")
         confined_env = dict(env, TEMP=scratch, TMP=scratch, PYTHONPYCACHEPREFIX=os.path.join(scratch, "pycache"))
-        return _run_low(argv, cwd, confined_env, timeout, private), True
+        return run_low(argv, cwd, confined_env, timeout, private), True
     finally:
         try:
             if labelled:

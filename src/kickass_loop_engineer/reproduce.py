@@ -23,7 +23,7 @@ from typing import Callable, Optional
 
 from .gates import default_python
 from .guardrails import VerificationPolicy
-from .workspace import Workspace
+from .workspace import Workspace, git_argv
 
 logger = logging.getLogger("kickass_loop_engineer.reproduce")
 
@@ -129,7 +129,7 @@ def slugify(text: str, max_length: int = _SLUG_MAX_LENGTH) -> str:
 def _git(workspace: str, *args: str,
          timeout: float = 60.0) -> subprocess.CompletedProcess:
     """Run a git subcommand in the workspace, raising on failure or timeout."""
-    return subprocess.run(["git", *args], cwd=workspace, capture_output=True,
+    return subprocess.run(git_argv(*args), cwd=workspace, capture_output=True,
                           text=True, check=True, timeout=timeout)
 
 

@@ -39,7 +39,7 @@ from typing import Optional
 from .archmap import ARCHMAP_RELPATH
 from .gates import GATES
 from .guardrails import VerificationPolicy
-from .workspace import candidate_digest, digest_matches
+from .workspace import candidate_digest, digest_matches, git_argv
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ def _git(workspace: str, *args: str, timeout: float = 60.0) -> subprocess.Comple
     """Run a git subcommand in the workspace, raising on failure or timeout."""
     # UTF-8 is git's own encoding for paths; the locale code page (cp1252 on a default Windows) garbled
     # non-ASCII names, so a proof could not stash them and a real candidate ended "not proven".
-    return subprocess.run(["git", *args], cwd=workspace, capture_output=True, encoding="utf-8",
+    return subprocess.run(git_argv(*args), cwd=workspace, capture_output=True, encoding="utf-8",
                           errors="surrogateescape", check=True, timeout=timeout)
 
 
