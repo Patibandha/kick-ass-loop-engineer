@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from kickass_loop_engineer import confine
+from kickass_loop_engineer import confine, verifier
 from kickass_loop_engineer.workspace import changed_paths
 
 pytestmark = pytest.mark.guardrail_gate_confinement
@@ -142,3 +142,14 @@ def test_a_submodule_the_gate_populates_never_runs_its_config(tmp_path):
     changed_paths(str(wt))
 
     assert not marker.exists()
+
+
+def test_proof_status_never_enters_a_submodule_even_if_gitmodules_asks(tmp_path):
+    wt = _worktree(tmp_path, with_submodule=True)
+    # .gitmodules `ignore = none` beats the engine's diff.ignoreSubmodules config; only the flag beats it.
+    _git(wt, "config", "-f", ".gitmodules", "submodule.sub.ignore", "none")
+    _git(tmp_path, "clone", "-q", str(tmp_path / "lib"), str(wt / "sub"))
+    (wt / "sub" / "a.txt").write_text("moved\n")
+    _git(wt / "sub", "commit", "-q", "-am", "moved")
+    paths = [path for _, path in verifier._changed_entries(str(wt))]
+    assert paths == [".gitmodules"]
