@@ -238,3 +238,30 @@ def test_existing_repro_path_is_never_overwritten(tmp_path):
     assert suffixed in prompt, "the brief names the suffixed destination"
     subject = _git_out(workspace, "log", "-1", "--format=%s").strip()
     assert subject == f"test: reproduction for {SLUG}-2 (engine-pinned)"
+
+
+class _RecordingPolicy(VerificationPolicy):
+    """The real policy, recording where each check ran."""
+
+    def __init__(self):
+        super().__init__()
+        self.cwds = []
+
+    def run(self, command, cwd, **kwargs):
+        self.cwds.append(cwd)
+        return super().run(command, cwd, **kwargs)
+
+
+@pytest.mark.slow
+def test_the_red_check_runs_in_a_throwaway_worktree_never_the_workspace(tmp_path):
+    import os
+    from kickass_loop_engineer.worktree import WorktreeManager
+
+    workspace = _bug_repo(tmp_path)
+    policy = _RecordingPolicy()
+    result = generate_repro(Builder(FakeProvider([FAILING_REPRO])), _objective(), workspace, policy=policy,
+                            worktrees=WorktreeManager(workspace, base_dir=str(tmp_path / "wts")))
+
+    assert result == ReproResult(path=REPRO_PATH, committed=True), "RED was confirmed on the seeded copy"
+    assert policy.cwds and workspace not in policy.cwds, "builder-written test code never runs in the workspace"
+    assert all(not os.path.exists(cwd) for cwd in policy.cwds), "the worktree is removed afterwards"
