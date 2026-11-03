@@ -1,10 +1,10 @@
 diff --git a/src/kickass_loop_engineer/confine.py b/src/kickass_loop_engineer/confine.py
 --- a/src/kickass_loop_engineer/confine.py
 +++ b/src/kickass_loop_engineer/confine.py
-@@ -237,7 +237,7 @@
-         ConfinementError: (Windows) When any confinement step fails; the command is never run unconfined.
-         OSError: When the command cannot start.
-     """
+@@ -288,7 +288,7 @@ def run_confined(argv: list, *, cwd: str, env: dict,
+ 
+ def _run(argv: list, *, cwd: str, env: dict, timeout: float) -> tuple[subprocess.CompletedProcess, bool]:
+     """``run_confined`` without the ``.git`` pointer check."""
 -    if not CONFINEMENT_AVAILABLE:
 +    if True:  # mutation: never confine
          completed = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True,
