@@ -43,7 +43,7 @@ from kickass_loop_engineer.workspace import candidate_digest
 from kickass_loop_engineer.worktree import WorktreeError, WorktreeManager
 
 from helpers import FakePolicy, FakeProvider
-from test_orchestrator import FILE_BLOCK, TWO_SLICE_JSON, FakeWorktrees, _make, _pass_gates
+from test_orchestrator import FILE_BLOCK, TWO_SLICE_JSON, FakeWorktrees, _is_final_gate, _make, _pass_gates
 
 pytestmark = pytest.mark.guardrail_proof_transition
 
@@ -175,10 +175,8 @@ class GitWorktrees(FakeWorktrees):
 def _attempt_gates(final_policy_factory=lambda: FakePolicy(passed=True)):
     """``run_gates`` for the orchestrator: real gates under a fake policy per attempt, a chosen one at the end."""
     def dispatch(specs, workspace, policy=None):
-        main = dispatch.main
-        chosen = final_policy_factory() if workspace == main else FakePolicy(passed=True)
+        chosen = final_policy_factory() if _is_final_gate(workspace) else FakePolicy(passed=True)
         return verifier_mod.run_gates(specs, workspace, policy=chosen)
-    dispatch.main = ""
     return dispatch
 
 
@@ -188,7 +186,6 @@ def _orchestrate(tmp_path, monkeypatch, *, between_gate_and_promote=None, final_
     workspace = workspace or str(tmp_path / "ws")
     os.makedirs(workspace, exist_ok=True)
     dispatch = _attempt_gates(final_policy or (lambda: FakePolicy(passed=True)))
-    dispatch.main = workspace
     monkeypatch.setattr(orchestrator, "run_gates", dispatch)
     worktrees = worktrees or GitWorktrees(str(tmp_path / "wts"))
     if between_gate_and_promote is not None:
