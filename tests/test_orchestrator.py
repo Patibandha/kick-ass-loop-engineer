@@ -103,6 +103,11 @@ class FakeNotifier:
         return True
 
 
+def _is_final_gate(workspace):
+    """The orchestrator's final gate runs in a throwaway worktree named ``final-gate``."""
+    return os.path.basename(workspace).startswith("final-gate")
+
+
 def _pass_gates(specs, workspace, policy=None):
     return GatesResult(records=[
         EvidenceRecord(gate=s.name, command=s.command, passed=True,
@@ -329,7 +334,7 @@ def test_final_gate_failure_is_blocked(tmp_path, monkeypatch):
     workspace = _ws(tmp_path)
 
     def dispatch_gates(specs, ws_arg, policy=None):
-        if ws_arg != workspace:  # per-attempt gates pass, final gate fails
+        if not _is_final_gate(ws_arg):  # per-attempt gates pass, final gate fails
             return _pass_gates(specs, ws_arg, policy)
         first = specs[0]
         return GatesResult(records=[
@@ -374,7 +379,9 @@ def test_gate_list_runs_per_attempt_and_finally(tmp_path, monkeypatch):
     assert len(calls) == 2
     for received, _ws_arg in calls:
         assert received == specs  # the FULL list, in order, every time
-    assert calls[-1][1] == workspace, "final run gates the main workspace"
+    final_ws = calls[-1][1]
+    assert final_ws != workspace, "the final run never gates (and never labels) the main workspace"
+    assert final_ws in orch.worktrees.created and final_ws in orch.worktrees.removed, "it gates a throwaway worktree"
     assert calls[0][1] != workspace, "attempt run gates its worktree"
 
 
@@ -418,7 +425,7 @@ def test_final_empty_gates_result_blocks_with_clear_reason(tmp_path, monkeypatch
     workspace = _ws(tmp_path)
 
     def dispatch_gates(specs, ws_arg, policy=None):
-        if ws_arg != workspace:  # attempts pass; the final run yields no records
+        if not _is_final_gate(ws_arg):  # attempts pass; the final run yields no records
             return _pass_gates(specs, ws_arg, policy)
         return GatesResult(records=[])
 
@@ -1031,12 +1038,13 @@ def test_importlinter_propagated_into_attempt_worktrees(tmp_path, monkeypatch):
     orch, outcome = _run_architected(tmp_path, workspace)
 
     assert outcome.state is TerminalState.SUCCESS
-    attempt_workspaces = [ws for ws in gated_workspaces if ws != workspace]
+    attempt_workspaces = [ws for ws in gated_workspaces if not _is_final_gate(ws)]
     assert attempt_workspaces  # attempts were gated in their own worktrees
     for ws in attempt_workspaces:
         assert os.path.exists(os.path.join(ws, ".importlinter"))
-    # The final gate list still runs in the main workspace, unchanged.
-    assert gated_workspaces[-1] == workspace
+    # The final gate runs in a throwaway worktree, and it gets the engine-rendered config too.
+    assert _is_final_gate(gated_workspaces[-1])
+    assert os.path.exists(os.path.join(gated_workspaces[-1], ".importlinter"))
 
 
 def test_importlinter_propagation_failure_is_best_effort(tmp_path, monkeypatch, caplog):

@@ -927,7 +927,10 @@ class Orchestrator:
             if outcome is not None:
                 return outcome
 
-        final = run_gates(self.gates, self.workspace, policy=self.policy)
+        try:
+            final = self._final_gates()
+        except WorktreeError as exc:
+            return RunOutcome(TerminalState.BLOCKED, f"could not create the final-gate worktree: {exc}")
         if not final.passed:
             # Fail-fast means the LAST record is the failure; an empty record
             # list means nothing ran at all.
@@ -936,6 +939,20 @@ class Orchestrator:
             return RunOutcome(TerminalState.BLOCKED, reason)
         evidence = [final.to_dict()] + [e.to_dict() for e in self._slice_evidence]
         return RunOutcome(TerminalState.SUCCESS, reason="all gates green", evidence=evidence)
+
+    def _final_gates(self) -> GatesResult:
+        """Gate the promoted state in a throwaway worktree seeded from the workspace, never in the workspace.
+
+        A confined gate may write anywhere in its working folder, so its folder is labelled writable for the run.
+        That must never be the user's workspace: a gate there could plant ``.git`` hooks and config, or forge
+        run state, after promote's checks already ran.
+        """
+        worktree = self.worktrees.create("final-gate")
+        try:
+            self._propagate_engine_artifacts(worktree)
+            return run_gates(self.gates, worktree, policy=self.policy)
+        finally:
+            self.worktrees.remove(worktree)
 
     def _run_slice(self, slice_) -> RunOutcome | None:
         """Build, gate, review, and promote one slice.
