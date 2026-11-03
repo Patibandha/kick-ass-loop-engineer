@@ -477,7 +477,8 @@ Guardrails are enforced **in code, not just prompts**:
   sensitive paths (`secrets/`, `*/auth/`, `*payment*`) park the run for human approval.
 - **Gate confinement (Windows only)** — on Windows every gate runs at low integrity and can write only in its
   throwaway worktree and a private temp folder. **Linux and macOS gates are not confined**; their evidence
-  says `unconfined`. Reads and network are not confined anywhere.
+  says `unconfined`. Reads and network are not confined anywhere. `loop-engineer verify --workspace <dir>` gates
+  that folder itself, so the gate can write all of it, its `.git` included.
 - **Audit monitor (diagnostic only, never a sandbox)** — `tests/audit_monitor.py` logs the file and
   subprocess operations engine code performs during a test run, and `scripts/compare_audit.py` lists any
   that are not in [`docs/acceptance/operation-inventory.md`](docs/acceptance/operation-inventory.md). It

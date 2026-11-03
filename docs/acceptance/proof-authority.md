@@ -33,11 +33,11 @@ and arbitrary files, including the engine's own source when it is writable (atta
 
 **Fixed on Windows, open on Linux and macOS.** On Windows every gate command runs as a separate low-integrity
 process (`confine.run_confined`): it can write only inside its attempt worktree and a private temp folder, and the
-orchestrator runs the final gate in a throwaway worktree too, so the user's workspace (its `.git` and run state)
-is never labelled writable. A gate that rewrites its worktree's `.git` pointer has it put back and fails. A
+orchestrator runs the final gate, the fix-mode repro check and the audit gates in throwaway worktrees too, so the
+user's workspace (its `.git` and run state) is never labelled writable by the orchestrator. Every process the gate
+starts dies with it (a kill-on-close Job Object); a redirected `.git` pointer is put back, or the folder quarantined. A
 confinement step
 that fails fails the gate; it never falls back to an unconfined run. On a host without a confinement mechanism the
 gate runs as before and every gate result says `unconfined` in its evidence and in the run report. Network access
-is unchanged. Linux and macOS are not confined at all. Still open: gates the engine runs directly in a workspace
-the user names (`loop-engineer verify --workspace`, the read-only audit, the fix-mode repro check) label that
-workspace low for the run, and reads are not confined on any host.
+is unchanged. Linux and macOS are not confined at all. Still open: `loop-engineer verify --workspace <dir>` runs the gate in the
+folder the user names, so that folder (its `.git` included) is writable to the gate for the run, and reads are not confined on any host.

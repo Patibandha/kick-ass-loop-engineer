@@ -14,7 +14,7 @@ DECISIONS = DOCS / "decisions.md"
 
 ITEMS = ["Candidate bytes", "Workspace identity", "Gate command", "Configuration",
          "Environment", "Dependencies", "Git config", "Plugins"]
-ALLOWED = {"BOUND", "MUTABLE-ON-PURPOSE"}
+ALLOWED = {"BOUND", "PARTIAL", "MUTABLE-ON-PURPOSE"}
 MAX_PAGE_LINES = 60
 SRC_PATH = re.compile(r"src/[A-Za-z0-9_./-]+\.py")
 LINK = re.compile(r"\]\(decisions\.md#([^)]+)\)")

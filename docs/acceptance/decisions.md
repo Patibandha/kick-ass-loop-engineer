@@ -38,7 +38,8 @@ accepted as trusted. Proposed in Q6, awaiting Meet.
 
 ## D7 git config
 
-BOUND. `WorktreeManager` records a deterministic SHA-256 digest of the common git dir's `config` and all files under
+PARTIAL. Engine git calls run with `core.fsmonitor=false`, an empty `core.hooksPath` and submodules ignored
+(`workspace.git_argv`), but honour the rest of the repository's config. `WorktreeManager` records a deterministic SHA-256 digest of the common git dir's `config` and all files under
 `hooks/` (resolved with `git rev-parse --git-common-dir`, so a linked-worktree workspace is covered) when creating a worktree, and `promote` refuses if either changed during the attempt. Proposed in Q7, awaiting Meet.
 
 ## D8 plugins
@@ -63,7 +64,7 @@ Q1–Q8 are still open. Each entry says what this branch proposes; Meet has not 
   `codex_cli`, and `gemini_cli` so `GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `DB_PASSWORD`, and all matching credential vars are stripped.
 - **Q6** (**Proposed, awaiting Meet** — keep `MUTABLE-ON-PURPOSE`, no code change): The host toolchain and interpreter outside the
   workspace are accepted as trusted.
-- **Q7** (**Proposed, awaiting Meet** — implemented): `WorktreeManager` hashes `.git/config` and `.git/hooks/` at worktree
+- **Q7** (**Proposed, awaiting Meet** — partly implemented, detection at promote only): `WorktreeManager` hashes `.git/config` and `.git/hooks/` at worktree
   creation and refuses `promote` if the shared git configuration or hooks were modified during the attempt.
 - **Q8** (**Proposed, awaiting Meet** — implemented): `build_orchestrator` now defaults reviewer `claude_code` to
   `isolated=True` while keeping builder `isolated=False` by default.
