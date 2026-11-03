@@ -218,6 +218,41 @@ def _run_low(argv: list, cwd: str, env: dict, timeout: float, private: str) -> s
         return subprocess.CompletedProcess(argv, returncode, out.read(), err.read())
 
 
+def _git_pointer(cwd: str) -> Optional[bytes]:
+    """The bytes of ``<cwd>/.git`` when it is a plain file (a linked worktree's pointer), else ``None``."""
+    path = os.path.join(cwd, ".git")
+    if os.path.islink(path) or not os.path.isfile(path):
+        return None
+    with open(path, "rb") as handle:
+        return handle.read()
+
+
+def _restore_git_pointer(cwd: str, pointer: bytes) -> bool:
+    """Put *pointer* back as ``<cwd>/.git`` if the gate changed it; True when it had to.
+
+    The pointer sits inside the gate's writable folder. Redirected to a gitdir the gate built, the engine's next
+    ``git status`` there would run that gitdir's ``core.fsmonitor`` or hooks at the engine's own integrity.
+
+    Raises:
+        ConfinementError: When the pointer cannot be put back.
+    """
+    if _git_pointer(cwd) == pointer:
+        return False
+    path = os.path.join(cwd, ".git")
+    try:
+        if getattr(os.path, "isjunction", lambda _path: False)(path):  # Python 3.12+
+            os.rmdir(path)
+        elif os.path.isdir(path) and not os.path.islink(path):
+            shutil.rmtree(path)
+        elif os.path.lexists(path):
+            os.remove(path)
+        with open(path, "wb") as handle:
+            handle.write(pointer)
+    except OSError as exc:
+        raise ConfinementError(f"gate changed {path} and it could not be restored: {exc}") from exc
+    return True
+
+
 def run_confined(argv: list, *, cwd: str, env: dict,
                  timeout: float) -> tuple[subprocess.CompletedProcess, bool]:
     """Run *argv* in *cwd* confined where the host allows it.
@@ -234,9 +269,22 @@ def run_confined(argv: list, *, cwd: str, env: dict,
 
     Raises:
         subprocess.TimeoutExpired: When the command outlives *timeout*.
-        ConfinementError: (Windows) When any confinement step fails; the command is never run unconfined.
+        ConfinementError: When the command rewrote a worktree's ``.git`` file (put back first), or (Windows)
+            when any confinement step fails; the command is never run unconfined.
         OSError: When the command cannot start.
     """
+    pointer = _git_pointer(cwd)
+    try:
+        result = _run(argv, cwd=cwd, env=env, timeout=timeout)
+    finally:
+        changed = pointer is not None and _restore_git_pointer(cwd, pointer)
+    if changed:
+        raise ConfinementError(f"gate rewrote {os.path.join(cwd, '.git')}; restored it and failed the gate")
+    return result
+
+
+def _run(argv: list, *, cwd: str, env: dict, timeout: float) -> tuple[subprocess.CompletedProcess, bool]:
+    """``run_confined`` without the ``.git`` pointer check."""
     if not CONFINEMENT_AVAILABLE:
         completed = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True,
                                    timeout=timeout, check=False)
