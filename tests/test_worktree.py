@@ -185,3 +185,22 @@ def test_promote_refuses_when_git_hooks_modified_during_attempt(tmp_path):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+def test_promote_refuses_shared_git_config_change_when_the_workspace_is_a_linked_worktree(tmp_path):
+    from kickass_loop_engineer.worktree import WorktreeError
+    import pytest
+    repo = _make_repo(tmp_path)
+    linked = tmp_path / "linked"
+    subprocess.run(["git", "worktree", "add", "-q", "--detach", str(linked)], cwd=repo, check=True)
+    mgr = WorktreeManager(str(linked), base_dir=str(tmp_path / "wts"))
+    wt = mgr.create("attempt")
+    (Path(wt) / "new_module.py").write_text("VALUE = 1\n")
+    git_config = repo / ".git" / "config"  # the common dir: ``linked/.git`` is only a pointer file
+    git_config.write_text(git_config.read_text() + "\n[core]\n\tfsmonitor = evil\n")
+
+    with pytest.raises(WorktreeError, match=r"\.git/config or \.git/hooks was modified"):
+        mgr.promote(wt, str(linked))
+
+    assert not (linked / "new_module.py").exists()
+    mgr.remove(wt)
