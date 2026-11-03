@@ -150,6 +150,6 @@ def test_proof_status_never_enters_a_submodule_even_if_gitmodules_asks(tmp_path)
     _git(wt, "config", "-f", ".gitmodules", "submodule.sub.ignore", "none")
     _git(tmp_path, "clone", "-q", str(tmp_path / "lib"), str(wt / "sub"))
     (wt / "sub" / "a.txt").write_text("moved\n")
-    _git(wt / "sub", "commit", "-q", "-am", "moved")
+    _git(wt / "sub", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-am", "moved")
     paths = [path for _, path in verifier._changed_entries(str(wt))]
     assert paths == [".gitmodules"]
