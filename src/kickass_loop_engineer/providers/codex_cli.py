@@ -32,6 +32,7 @@ import subprocess
 import tempfile
 from typing import Optional
 
+from ..guardrails import is_credential_env
 from .base import Provider, ProviderError, ProviderResult, retry_transient
 from .cli_process import run_cli
 
@@ -119,7 +120,8 @@ class CodexCliProvider(Provider):
         return argv + ["-o", last_message, "-C", cwd, "-"]
 
     def _run(self, sandbox: str, prompt: str, cwd: str, timeout: float) -> ProviderResult:
-        env = {k: v for k, v in os.environ.items() if k not in _SCRUBBED_ENV}
+        env = {k: v for k, v in os.environ.items()
+               if k not in _SCRUBBED_ENV and not is_credential_env(k)}
         with tempfile.TemporaryDirectory(prefix="le-codex-out-") as out_dir:
             last_message = os.path.join(out_dir, _LAST_MESSAGE)
             try:

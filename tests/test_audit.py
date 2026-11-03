@@ -216,6 +216,18 @@ def test_run_audit_runs_only_read_only_gate_commands(tmp_path):
                                                     "gitleaks detect"]
 
 
+def test_run_audit_gates_a_throwaway_worktree_never_the_workspace(tmp_path):
+    from test_orchestrator import FakeWorktrees
+
+    policy, worktrees, ws = FakePolicy(passed=True), FakeWorktrees(str(tmp_path / "wts")), _ws(tmp_path)
+    run_audit(_reviewer(["NO FINDINGS"]), "", [("a.py", "A = 1\n")],
+              [GateSpec(name="security", command="bandit -r .")], ws, policy, on_usage=None,
+              worktrees=worktrees)
+
+    assert [cwd for (_cmd, cwd) in policy.runs] == worktrees.created
+    assert worktrees.removed == worktrees.created and ws not in worktrees.created
+
+
 def test_run_audit_without_read_only_gates_runs_no_commands(tmp_path):
     policy = FakePolicy(passed=True)
     run_audit(_reviewer(["NO FINDINGS"]), "", [("a.py", "A = 1\n")],

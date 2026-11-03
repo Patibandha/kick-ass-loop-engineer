@@ -102,7 +102,13 @@ def visual_critique(
             f"Objective: {objective}\n\n"
             "Critique the attached UI screenshot against this objective."
         )
-        response = provider.complete(VISUAL_SYSTEM, brief, images=(image,))
+        try:
+            response = provider.complete(VISUAL_SYSTEM, brief, images=(image,))
+        finally:
+            # The screenshot is the critique's input, not part of the candidate: left in the worktree it
+            # would change the gated candidate and block its promotion as stale.
+            if not os.path.isabs(screenshot_cmd.split()[-1]):
+                os.remove(image)
         if on_usage is not None:
             on_usage(response)
         return parse_findings(response.text)

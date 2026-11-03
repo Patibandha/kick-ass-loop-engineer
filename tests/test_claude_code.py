@@ -206,6 +206,23 @@ class ClaudeCodeEditTests(unittest.TestCase):
             env = self.edit_call().call_args.kwargs["env"]
         self.assertNotIn("ANTHROPIC_API_KEY", env)
 
+    def test_edit_strips_arbitrary_credential_env_vars(self):
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "GITHUB_TOKEN": "ghp_secret",
+                "AWS_SECRET_ACCESS_KEY": "aws_secret",
+                "DB_PASSWORD": "pw",
+                "OPENAI_API_KEY": "sk-123",
+                "KEEP_ME": "yes",
+            },
+            clear=False,
+        ):
+            env = self.edit_call().call_args.kwargs["env"]
+        for key in ("GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "DB_PASSWORD", "OPENAI_API_KEY"):
+            self.assertNotIn(key, env)
+        self.assertEqual(env["KEEP_ME"], "yes")
+
     def test_edit_rejects_a_missing_cwd_before_spawning_anything(self):
         with mock.patch("kickass_loop_engineer.providers.claude_code.subprocess.run") as run_mock:
             with self.assertRaises(ProviderError) as ctx:

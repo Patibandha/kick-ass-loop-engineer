@@ -22,8 +22,9 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from .gates import default_python
-from .guardrails import VerificationPolicy
-from .workspace import Workspace
+from .guardrails import VerificationPolicy, VerificationResult
+from .workspace import Workspace, git_argv
+from .worktree import WorktreeError
 
 logger = logging.getLogger("kickass_loop_engineer.reproduce")
 
@@ -129,7 +130,7 @@ def slugify(text: str, max_length: int = _SLUG_MAX_LENGTH) -> str:
 def _git(workspace: str, *args: str,
          timeout: float = 60.0) -> subprocess.CompletedProcess:
     """Run a git subcommand in the workspace, raising on failure or timeout."""
-    return subprocess.run(["git", *args], cwd=workspace, capture_output=True,
+    return subprocess.run(git_argv(*args), cwd=workspace, capture_output=True,
                           text=True, check=True, timeout=timeout)
 
 
@@ -164,9 +165,26 @@ def _write_repro(text: str, rel_path: str, workspace_root: str) -> bool:
     return False
 
 
+def _red_check(policy: VerificationPolicy, command: str, workspace: str, worktrees):
+    """Run the builder-written repro in a throwaway worktree seeded from *workspace* (in place without *worktrees*).
+
+    A confined gate may write its whole working folder: in the workspace that would be its ``.git`` and run state.
+    """
+    if worktrees is None:
+        return policy.run(command, cwd=workspace)
+    try:
+        checkout = worktrees.create("repro-check")
+    except WorktreeError as exc:
+        return VerificationResult(passed=False, command=command, error=f"could not create its worktree: {exc}")
+    try:
+        return policy.run(command, cwd=checkout)
+    finally:
+        worktrees.remove(checkout)
+
+
 def generate_repro(builder, objective, workspace: str,
                    policy: Optional[VerificationPolicy] = None,
-                   on_usage: Optional[Callable] = None) -> ReproResult:
+                   on_usage: Optional[Callable] = None, worktrees=None) -> ReproResult:
     """Produce, RED-verify, and engine-commit a reproduction test for a bug.
 
     Flow: one builder call emits the repro file (written via the guarded
@@ -191,6 +209,8 @@ def generate_repro(builder, objective, workspace: str,
         on_usage: Optional callback receiving the raw ``ProviderResult`` of
             every COMPLETED provider call (both generation calls are
             ledgered — tokens are spent either way).
+        worktrees: The run's ``WorktreeManager``; when given, the RED check runs in a throwaway worktree of
+            *workspace*, never in the workspace itself.
 
     Returns:
         A ``ReproResult`` — ``(path, committed=True)`` on success, or
@@ -231,7 +251,7 @@ def generate_repro(builder, objective, workspace: str,
             )
             continue
 
-        check = policy.run(check_cmd, cwd=workspace)
+        check = _red_check(policy, check_cmd, workspace, worktrees)
         if check.error:
             return ReproResult(path=rel_path, blocked=True, reason=(
                 f"cannot reproduce: RED check could not run: {check.error}"))

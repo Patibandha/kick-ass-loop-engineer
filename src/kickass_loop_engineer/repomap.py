@@ -16,6 +16,8 @@ import re
 import subprocess
 from typing import Dict, List, Optional, Set, Tuple
 
+from .workspace import git_argv
+
 logger = logging.getLogger("kickass_loop_engineer.repomap")
 
 TRUNCATION_MARKER = "... [truncated]"
@@ -49,7 +51,7 @@ def tracked_files(root: str) -> List[str]:
     """
     try:
         proc = subprocess.run(
-            ["git", "ls-files"], cwd=root, capture_output=True,
+            git_argv("ls-files"), cwd=root, capture_output=True,
             text=True, check=True, timeout=30,
         )
     except (OSError, subprocess.SubprocessError) as exc:

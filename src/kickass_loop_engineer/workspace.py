@@ -25,11 +25,13 @@ File block format the builder is instructed to emit:
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import os
 import re
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -44,6 +46,22 @@ _GIT_TIMEOUT_SECONDS = 60
 #: Chunk size for hashing a file without loading it whole into memory.
 _HASH_CHUNK_BYTES = 65536
 
+_no_hooks_dir: Optional[str] = None
+
+
+def git_argv(*args: str) -> list:
+    """``git <args>`` as the engine must run it in any folder a gate has written.
+
+    A gate controls files git reads there. These options keep that from running code at the engine's integrity:
+    no fsmonitor, hooks only from an empty folder the engine owns, and submodules never entered (a gate can
+    populate one with its own ``.git/config``). Every engine git call goes through here.
+    """
+    global _no_hooks_dir
+    if _no_hooks_dir is None:
+        _no_hooks_dir = tempfile.mkdtemp(prefix="le-no-hooks-")
+    return ["git", "-c", "core.fsmonitor=false", "-c", f"core.hooksPath={_no_hooks_dir}",
+            "-c", "diff.ignoreSubmodules=all", "-c", "submodule.recurse=false", *args]
+
 
 def changed_paths(folder: str) -> list:
     """Every changed path in *folder*'s git checkout, as git spells it (a rename or copy yields its new path).
@@ -56,7 +74,7 @@ def changed_paths(folder: str) -> list:
         subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError: when git cannot report the status.
     """
     out = subprocess.run(
-        ["git", "-C", folder, "status", "--porcelain", "-z", "--untracked-files=all"],
+        git_argv("-C", folder, "status", "--porcelain", "-z", "--untracked-files=all", "--ignore-submodules=all"),
         check=True, capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=_GIT_TIMEOUT_SECONDS,
     ).stdout
     fields = out.split("\0")
@@ -86,17 +104,116 @@ def contained(root: str, target: str) -> bool:
         return False
 
 
+def _is_link(path: str) -> bool:
+    """Say whether *path* is a symlink or (Windows) junction."""
+    # os.path.isjunction is Python 3.12+; before it, junctions read as plain folders.
+    return os.path.islink(path) or getattr(os.path, "isjunction", lambda _p: False)(path)
+
+
 def write_text_unlinked(path: str, text: str) -> None:
-    """Write *text* to *path*, refusing when *path* is a link (it would overwrite the link's target).
+    """Write *text* to *path* atomically, refusing when *path* is a link (it would overwrite the link's target).
+
+    The text goes to a fresh temp file beside *path* (created exclusively, so a link planted at a guessable
+    temp name is never followed), is flushed to disk, and then replaces *path* in one ``os.replace``. A process
+    killed partway through leaves the previous file, or none, never a torn one that a resume could misread.
 
     Raises:
         OSError: When *path* is a symlink or junction, or the write fails.
     """
-    # os.path.isjunction is Python 3.12+; before it, junctions read as plain folders.
-    if os.path.islink(path) or getattr(os.path, "isjunction", lambda _p: False)(path):
+    if _is_link(path):
         raise OSError(f"refusing to write through a link: {path}")
-    with open(path, "w", encoding="utf-8") as handle:
-        handle.write(text)
+    directory = os.path.dirname(os.path.abspath(path))
+    fd, tmp = tempfile.mkstemp(prefix=f".{os.path.basename(path)}.", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if os.name != "nt":
+            os.chmod(tmp, 0o644)  # mkstemp's 0600 would hide run state from its owner's other tools
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
+
+
+def append_line_unlinked(path: str, line: str) -> None:
+    """Append one *line* (plus a newline) to *path*, refusing links and healing a torn last line.
+
+    A process killed partway through an append leaves a last line without its newline; the next append
+    would glue onto it and lose its own record too. The torn tail is closed off with a newline first, so it
+    stays one unreadable line and every later record parses on its own.
+
+    Raises:
+        OSError: When *path* is a symlink or junction, or the write fails.
+    """
+    if _is_link(path):
+        raise OSError(f"refusing to write through a link: {path}")
+    with open(path, "a+b") as handle:
+        handle.seek(0, os.SEEK_END)
+        torn = False
+        if handle.tell():
+            handle.seek(-1, os.SEEK_END)
+            torn = handle.read(1) != b"\n"
+        handle.write((("\n" if torn else "") + line + "\n").encode("utf-8"))
+
+
+def candidate_files(folder: str) -> list:
+    """Read the candidate a gate verdict is about: every changed regular file in *folder*'s checkout.
+
+    The same selection ``WorktreeManager.promote`` copies: git's changed paths minus run artifacts under
+    ``.loop-engineer/``, links and anything that is not a regular file.
+
+    Returns:
+        ``[(rel_path, content_bytes, mtime_ns)]`` sorted by path.
+
+    Raises:
+        subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError: when git cannot report the status
+        or a file cannot be read.
+    """
+    files = []
+    for rel in sorted(set(changed_paths(folder))):
+        if not rel or rel == ".loop-engineer" or rel.startswith(".loop-engineer/"):
+            continue
+        path = os.path.join(folder, rel)
+        if os.path.islink(path) or not os.path.isfile(path):
+            continue
+        with open(path, "rb") as handle:
+            content = handle.read()
+            mtime_ns = os.fstat(handle.fileno()).st_mtime_ns
+        files.append((rel, content, mtime_ns))
+    return files
+
+
+def digest_of(files: list) -> str:
+    """The sha256 binding for ``candidate_files`` output: every path, its bytes and its write time.
+
+    The write time is bound on purpose (owner policy 2026-10-22: no earlier pass is ever reused). A file
+    rewritten after its gate, even back to the very bytes that were gated, is not the file the gate ran on.
+    """
+    hasher = hashlib.sha256()
+    for rel, content, mtime_ns in files:
+        hasher.update(f"{rel}\0{len(content)}\0{mtime_ns}\0".encode("utf-8", "surrogateescape"))
+        hasher.update(hashlib.sha256(content).digest())
+    return hasher.hexdigest()
+
+
+def candidate_digest(folder: str) -> str:
+    """The sha256 binding of *folder*'s current candidate (see ``candidate_files`` and ``digest_of``).
+
+    Raises:
+        subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError: when the candidate cannot be read.
+    """
+    return digest_of(candidate_files(folder))
+
+
+def digest_matches(bound: Optional[str], current: str) -> bool:
+    """Say whether a gate-time binding still describes the current candidate.
+
+    An empty binding (the candidate could not be read when its gate ran) never matches: fail closed.
+    """
+    return bool(bound) and current == bound
 
 class WorkspaceError(RuntimeError):
     """Raised when the workspace cannot be inspected or restored.
@@ -400,7 +517,7 @@ class Workspace:
         """
         try:
             return subprocess.run(
-                ["git", "-C", self.root, *args], check=True, capture_output=True,
+                git_argv("-C", self.root, *args), check=True, capture_output=True,
                 text=True, timeout=_GIT_TIMEOUT_SECONDS)
         except subprocess.CalledProcessError as exc:
             detail = (exc.stderr or "").strip() or str(exc)
@@ -422,8 +539,8 @@ class Workspace:
         """
         try:
             completed = subprocess.run(
-                ["git", "-C", self.root, "merge-base", "--is-ancestor",
-                 candidate, commit],
+                git_argv("-C", self.root, "merge-base", "--is-ancestor",
+                         candidate, commit),
                 check=False, capture_output=True, text=True,
                 timeout=_GIT_TIMEOUT_SECONDS)
         except (subprocess.TimeoutExpired, OSError) as exc:
@@ -513,7 +630,7 @@ class Workspace:
         if self._is_tracked(rel):
             try:
                 subprocess.run(
-                    ["git", "-C", self.root, "checkout", "--", rel],
+                    git_argv("-C", self.root, "checkout", "--", rel),
                     check=True, capture_output=True, text=True,
                     timeout=_GIT_TIMEOUT_SECONDS)
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
@@ -529,7 +646,7 @@ class Workspace:
         """Return True when git tracks *rel* (unknown paths count as untracked)."""
         try:
             completed = subprocess.run(
-                ["git", "-C", self.root, "ls-files", "--error-unmatch", "--", rel],
+                git_argv("-C", self.root, "ls-files", "--error-unmatch", "--", rel),
                 check=False, capture_output=True, text=True,
                 timeout=_GIT_TIMEOUT_SECONDS)
         except (subprocess.TimeoutExpired, OSError) as exc:

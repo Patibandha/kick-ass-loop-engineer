@@ -18,6 +18,28 @@ come from version control.
 
 ---
 
+## 3.5.0 — Windows gate confinement, Q1-Q8 proposals (unreleased)
+
+### Added
+- **Gate confinement on Windows only (PA-2)**: every gate runs as a low-integrity process that can write only in
+  its worktree and a private temp folder; a failed confinement step fails the gate. **Linux and macOS are not
+  confined**: gates there run as plain subprocesses and their evidence says `unconfined`.
+- The final gate, the fix-mode repro check and the audit gates run in a throwaway worktree seeded from the
+  workspace, never in the workspace itself.
+- On Windows every process a gate starts runs in a kill-on-close Job Object and dies with the gate. A redirected
+  `.git` pointer is put back (read-only or not), and the gate fails; a folder whose pointer cannot be put back is
+  quarantined. Every engine git call runs with fsmonitor off, hooks from an empty folder and submodules ignored.
+- Proposed answers to Q1-Q8 (`docs/acceptance/decisions.md`): candidate digest binding, WritePolicy re-check at
+  promote, stash SHA check, credential scrub in all CLI providers, shared git config and hooks digest, isolated
+  reviewer. These await Meet's decision.
+
+### Known limits
+- Reads and network are not confined on any host.
+- `loop-engineer verify --workspace <dir>` runs the gate in that folder, so the gate can write all of it, its `.git`
+  included.
+- Q7 is partial: the shared git config and hooks are only checked at promote; engine git calls override fsmonitor
+  and hooks but honour the rest of the repository's config.
+
 ## 3.4.0 — Windows default gate, one-slice builds, guardrails tested on three platforms (2026-10-28)
 
 ### Fixed

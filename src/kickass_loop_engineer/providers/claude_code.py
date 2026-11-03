@@ -35,6 +35,8 @@ import subprocess
 import tempfile
 from typing import Optional, Sequence
 
+from ..guardrails import is_credential_env
+
 from .base import (
     Provider,
     ProviderError,
@@ -254,8 +256,11 @@ class ClaudeCodeProvider(Provider):
                 shared transient classifier can see an overload or rate limit.
         """
         # Decision-model keys are never the builder's business.
+        keep_auth = () if self.force_subscription else ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
         env = {k: v for k, v in os.environ.items()
-               if k not in ("TYPESAFE_API_KEY", "CLOUDFLARE_API_TOKEN")}
+               if (k in keep_auth or not is_credential_env(k))
+               and k not in ("TYPESAFE_API_KEY", "CLOUDFLARE_API_TOKEN")}
+        # Credential scrub applied above.
         if self.force_subscription:
             for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
                 env.pop(key, None)

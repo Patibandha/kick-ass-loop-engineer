@@ -245,6 +245,17 @@ def _render(findings: List[dict], gates_result: Optional[GatesResult],
     return "\n".join(lines)
 
 
+def _audit_gates(specs, workspace: str, policy, worktrees):
+    """Run *specs* in a throwaway worktree seeded from *workspace* (in place without *worktrees*)."""
+    if worktrees is None:
+        return run_gates(specs, workspace, policy=policy)
+    checkout = worktrees.create("audit-gates")
+    try:
+        return run_gates(specs, checkout, policy=policy)
+    finally:
+        worktrees.remove(checkout)
+
+
 def run_audit(
     reviewer,
     repo_map_text: str,
@@ -254,6 +265,7 @@ def run_audit(
     policy=None,
     on_usage: Optional[Callable] = None,
     budget_check: Callable[[], bool] = _always_continue,
+    worktrees=None,
 ) -> Tuple[str, List[dict]]:
     """Run the read-only audit sweep and render the findings report.
 
@@ -267,7 +279,7 @@ def run_audit(
     (the orchestrator's private budget-cap exception stays private). On a stop
     the findings gathered so far are still rendered (with a truncation note)
     and returned. After the sweep, only the read-only configured gates run
-    (see :func:`read_only_gates`), in the main workspace — the tree is never
+    (see :func:`read_only_gates`), in a throwaway worktree when given one — the tree is never
     mutated.
 
     Args:
@@ -286,6 +298,8 @@ def run_audit(
             reviewer call; a ``False`` return stops the sweep and renders the
             partial findings with a truncation note. Defaults to always
             continuing (back-compat).
+        worktrees: The run's ``WorktreeManager``; when given, the gates run in a throwaway worktree of
+            *workspace* (a confined gate may write its whole working folder, ``.git`` included).
 
     Returns:
         ``(findings_md_path, findings)`` — the absolute report path and the
@@ -311,8 +325,7 @@ def run_audit(
                         for text in review.findings)
 
     ro_specs = read_only_gates(gates)
-    gates_result = (run_gates(ro_specs, workspace, policy=policy)
-                    if ro_specs else None)
+    gates_result = _audit_gates(ro_specs, workspace, policy, worktrees) if ro_specs else None
 
     report = _render(findings, gates_result,
                      file_count=len(files), chunk_count=len(chunks),

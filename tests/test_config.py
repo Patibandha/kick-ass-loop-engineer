@@ -855,3 +855,38 @@ class TestEscalationAllowTokens:
         orch = build_orchestrator({}, workspace=tmp, month="2026-07",
                                   objective=Objective(goal="g", done_when="d"))
         assert orch.escalation_allow_tokens == ()
+
+    def test_reviewer_claude_code_defaults_to_isolated_true_while_builder_stays_false(self):
+        tmp = tempfile.mkdtemp()
+        orch = build_orchestrator(
+            {
+                "builder": {"provider": "claude_code", "model": "claude-sonnet-4-6"},
+                "reviewer": {
+                    "provider": "claude_code",
+                    "model": "claude-opus-4-6",
+                    "allow_same_family": True,
+                },
+            },
+            workspace=tmp,
+            month="2026-10",
+            objective=Objective(goal="g", done_when="d"),
+        )
+        assert orch.builder.provider.isolated is False
+        assert orch.reviewer.reviewer.provider.isolated is True
+
+    def test_reviewer_claude_code_respects_explicit_isolated_false(self):
+        tmp = tempfile.mkdtemp()
+        orch = build_orchestrator(
+            {
+                "builder": {"provider": "ollama", "model": "kimi-k2.7-code:cloud"},
+                "reviewer": {
+                    "provider": "claude_code",
+                    "model": "claude-opus-4-6",
+                    "isolated": False,
+                },
+            },
+            workspace=tmp,
+            month="2026-10",
+            objective=Objective(goal="g", done_when="d"),
+        )
+        assert orch.reviewer.reviewer.provider.isolated is False

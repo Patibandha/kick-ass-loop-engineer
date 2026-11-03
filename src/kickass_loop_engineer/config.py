@@ -94,6 +94,8 @@ guardrails:
   max_file_bytes: 1000000
   max_files_per_round: 50
   allow_overwrite: true
+#   gate_timeout_seconds: 900  # per gate command (default 300, allowed 10-7200);
+#                              # raise it for a whole-suite gate that runs long
 #   extra_verify_prefixes:     # extend the verification allowlist — MUST be a
 #     - "mytool check"         # list (scalars are rejected). WARNING: these run
 #                              # with gate authority; every use logs a warning.
@@ -780,7 +782,9 @@ def build_verification_policy(config: dict[str, Any]) -> VerificationPolicy:
     The bundled ``DEFAULT_VERIFY_PREFIXES`` allowlist is always included. Users
     may extend it via ``guardrails.extra_verify_prefixes`` in config; every use
     of that escape hatch logs a WARNING naming the extra prefixes, because they
-    run with gate authority.
+    run with gate authority. ``guardrails.gate_timeout_seconds`` raises or lowers the
+    per-command limit (default 300 s) for suites that take longer; a slow whole-suite
+    gate otherwise ends "timed out" on every attempt.
 
     Args:
         config: Parsed config with an optional ``guardrails`` section carrying
@@ -805,7 +809,30 @@ def build_verification_policy(config: dict[str, Any]) -> VerificationPolicy:
     if extras:
         logger.warning("extending the verification allowlist from config: %s "
                        "(review these — they run with gate authority)", list(extras))
-    return VerificationPolicy(allowed_prefixes=DEFAULT_VERIFY_PREFIXES + extras)
+    timeout = _gate_timeout(config)
+    return VerificationPolicy(allowed_prefixes=DEFAULT_VERIFY_PREFIXES + extras, timeout_seconds=timeout)
+
+
+#: Bounds for ``guardrails.gate_timeout_seconds``: a gate must get some time, and never run unbounded.
+GATE_TIMEOUT_MIN_SECONDS = 10.0
+GATE_TIMEOUT_MAX_SECONDS = 7200.0
+
+
+def _gate_timeout(config: dict[str, Any]) -> float:
+    """``guardrails.gate_timeout_seconds``, or the policy default when unset.
+
+    Raises:
+        RuntimeError: When the value is not a number within the allowed bounds.
+    """
+    raw = (config.get("guardrails", {}) or {}).get("gate_timeout_seconds")
+    if raw is None:
+        return VerificationPolicy().timeout_seconds
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise RuntimeError(f"guardrails.gate_timeout_seconds must be a number (got {type(raw).__name__})")
+    if not GATE_TIMEOUT_MIN_SECONDS <= raw <= GATE_TIMEOUT_MAX_SECONDS:
+        raise RuntimeError(f"guardrails.gate_timeout_seconds must be between {GATE_TIMEOUT_MIN_SECONDS:.0f} and "
+                           f"{GATE_TIMEOUT_MAX_SECONDS:.0f} (got {raw})")
+    return float(raw)
 
 
 def build_visual(config: dict[str, Any]) -> tuple:
@@ -924,7 +951,10 @@ def build_orchestrator(config: dict[str, Any], *, workspace: str, month: str,
     reviewer_family = str(reviewer_cfg.pop("family", "") or "")
     # Operator override of the cross-model guard (see review.ensure_cross_model).
     allow_same_family = reviewer_cfg.pop("allow_same_family", False) is True
-    reviewer_provider = build_provider(reviewer_cfg.pop("provider"), **reviewer_cfg)
+    reviewer_provider_name = reviewer_cfg.pop("provider")
+    if reviewer_provider_name == "claude_code":
+        reviewer_cfg.setdefault("isolated", True)
+    reviewer_provider = build_provider(reviewer_provider_name, **reviewer_cfg)
     builder_model = getattr(builder.provider, "model", None) or builder.provider.name
     reviewer_model = getattr(reviewer_provider, "model", None) or reviewer_provider.name
     # format_retries governs BOTH agents (as documented): the reviewer's paid
