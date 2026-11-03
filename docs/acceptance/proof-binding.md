@@ -3,7 +3,7 @@
 What a gate pass is bound to today, read from the code (`v3.5.0`).
 
 - **BOUND**: the engine fixes the item in code, so a candidate cannot change it between the gate run and promotion.
-- **MUTABLE-ON-PURPOSE**: nothing pins the item today and the design relies on it varying (confirmed by Meet, 2026-10-29).
+- **MUTABLE-ON-PURPOSE**: nothing pins the item today and the design relies on it varying (proposed, awaiting Meet's decision).
 
 Every row links to its entry in [decisions.md](decisions.md). Authority per actor: [authority-map.md](authority-map.md).
 
