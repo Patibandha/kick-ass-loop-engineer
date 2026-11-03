@@ -14,7 +14,7 @@ import tempfile
 from typing import Generator, Optional
 
 from .guardrails import WritePolicy
-from .workspace import candidate_files, changed_paths, contained, digest_matches, digest_of
+from .workspace import candidate_files, changed_paths, contained, digest_matches, digest_of, git_argv
 
 
 class WorktreeError(Exception):
@@ -324,7 +324,7 @@ class WorktreeManager:
         WorktreeError
             On non-zero exit, timeout, or OS-level failure.
         """
-        cmd = ["git", "-C", self._repo_root, *args]
+        cmd = git_argv("-C", self._repo_root, *args)
         try:
             return subprocess.run(
                 cmd,

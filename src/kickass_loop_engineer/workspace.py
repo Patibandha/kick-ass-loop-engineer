@@ -46,6 +46,22 @@ _GIT_TIMEOUT_SECONDS = 60
 #: Chunk size for hashing a file without loading it whole into memory.
 _HASH_CHUNK_BYTES = 65536
 
+_no_hooks_dir: Optional[str] = None
+
+
+def git_argv(*args: str) -> list:
+    """``git <args>`` as the engine must run it in any folder a gate has written.
+
+    A gate controls files git reads there. These options keep that from running code at the engine's integrity:
+    no fsmonitor, hooks only from an empty folder the engine owns, and submodules never entered (a gate can
+    populate one with its own ``.git/config``). Every engine git call goes through here.
+    """
+    global _no_hooks_dir
+    if _no_hooks_dir is None:
+        _no_hooks_dir = tempfile.mkdtemp(prefix="le-no-hooks-")
+    return ["git", "-c", "core.fsmonitor=false", "-c", f"core.hooksPath={_no_hooks_dir}",
+            "-c", "diff.ignoreSubmodules=all", "-c", "submodule.recurse=false", *args]
+
 
 def changed_paths(folder: str) -> list:
     """Every changed path in *folder*'s git checkout, as git spells it (a rename or copy yields its new path).
@@ -58,7 +74,7 @@ def changed_paths(folder: str) -> list:
         subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError: when git cannot report the status.
     """
     out = subprocess.run(
-        ["git", "-C", folder, "status", "--porcelain", "-z", "--untracked-files=all"],
+        git_argv("-C", folder, "status", "--porcelain", "-z", "--untracked-files=all", "--ignore-submodules=all"),
         check=True, capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=_GIT_TIMEOUT_SECONDS,
     ).stdout
     fields = out.split("\0")
@@ -501,7 +517,7 @@ class Workspace:
         """
         try:
             return subprocess.run(
-                ["git", "-C", self.root, *args], check=True, capture_output=True,
+                git_argv("-C", self.root, *args), check=True, capture_output=True,
                 text=True, timeout=_GIT_TIMEOUT_SECONDS)
         except subprocess.CalledProcessError as exc:
             detail = (exc.stderr or "").strip() or str(exc)
@@ -523,8 +539,8 @@ class Workspace:
         """
         try:
             completed = subprocess.run(
-                ["git", "-C", self.root, "merge-base", "--is-ancestor",
-                 candidate, commit],
+                git_argv("-C", self.root, "merge-base", "--is-ancestor",
+                         candidate, commit),
                 check=False, capture_output=True, text=True,
                 timeout=_GIT_TIMEOUT_SECONDS)
         except (subprocess.TimeoutExpired, OSError) as exc:
@@ -614,7 +630,7 @@ class Workspace:
         if self._is_tracked(rel):
             try:
                 subprocess.run(
-                    ["git", "-C", self.root, "checkout", "--", rel],
+                    git_argv("-C", self.root, "checkout", "--", rel),
                     check=True, capture_output=True, text=True,
                     timeout=_GIT_TIMEOUT_SECONDS)
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
@@ -630,7 +646,7 @@ class Workspace:
         """Return True when git tracks *rel* (unknown paths count as untracked)."""
         try:
             completed = subprocess.run(
-                ["git", "-C", self.root, "ls-files", "--error-unmatch", "--", rel],
+                git_argv("-C", self.root, "ls-files", "--error-unmatch", "--", rel),
                 check=False, capture_output=True, text=True,
                 timeout=_GIT_TIMEOUT_SECONDS)
         except (subprocess.TimeoutExpired, OSError) as exc:
