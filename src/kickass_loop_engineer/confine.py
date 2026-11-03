@@ -4,11 +4,14 @@ On Windows the command runs as a separate low-integrity process. Windows' mandat
 low-integrity process from writing to anything labelled medium (every file of the user's by default), so the
 working folder and a private temp folder are labelled low for the run and every other path stays out of reach:
 the main workspace, its run state and the engine's own source. ``<cwd>/.loop-engineer`` keeps an explicit medium
-label, so a gate cannot write run state even in its own working folder. After the run the working folder is
-labelled medium again and the private folder is removed.
+label, which stops a direct write but not a rename: the parent is low, so a gate can move the folder aside and
+recreate it. Run state is therefore safe only because the orchestrator never confines a gate in the workspace that
+holds it (attempt and final gates run in throwaway worktrees). After the run the working folder is labelled medium
+again and the private folder is removed. A worktree's ``.git`` pointer file is checked after every run, on every
+host: a gate that rewrote it has it put back and fails.
 
-Where the host has no such mechanism (Linux, macOS) the command runs as a plain subprocess and the caller is
-told it ran unconfined, so the evidence can say so. On Windows a confinement step that fails raises ``OSError``:
+Linux and macOS are NOT confined: there the command runs as a plain subprocess and the caller is told it ran
+unconfined, so the evidence says so. On Windows a confinement step that fails raises ``OSError``:
 the gate fails, it never falls back to an unconfined run. Network access is not changed.
 """
 

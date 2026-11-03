@@ -18,6 +18,22 @@ come from version control.
 
 ---
 
+## 3.5.0 — Windows gate confinement, Q1-Q8 proposals (unreleased)
+
+### Added
+- **Gate confinement on Windows only (PA-2)**: every gate runs as a low-integrity process that can write only in
+  its worktree and a private temp folder; a failed confinement step fails the gate. **Linux and macOS are not
+  confined**: gates there run as plain subprocesses and their evidence says `unconfined`.
+- The final gate runs in a throwaway worktree seeded from the promoted workspace, never in the workspace itself.
+- A gate that rewrites its worktree's `.git` pointer file has it put back and fails (every host).
+- Proposed answers to Q1-Q8 (`docs/acceptance/decisions.md`): candidate digest binding, WritePolicy re-check at
+  promote, stash SHA check, credential scrub in all CLI providers, shared git config and hooks digest, isolated
+  reviewer. These await Meet's decision.
+
+### Known limits
+- Reads and network are not confined on any host. Gates run directly in a user-named workspace
+  (`verify --workspace`, audit, fix-mode repro check) still label that workspace low for the run.
+
 ## 3.4.0 — Windows default gate, one-slice builds, guardrails tested on three platforms (2026-10-28)
 
 ### Fixed
