@@ -110,3 +110,40 @@ def test_a_confinement_failure_fails_the_gate_with_its_error(tmp_path, monkeypat
     result = VerificationPolicy().run(f"{DEFAULT_GATE_CMD} -p no:cacheprovider",
                                       cwd=_repo(tmp_path, "def test_ok():\n    pass\n"))
     assert not result.passed and result.error == "confinement failed: DuplicateTokenEx failed"
+
+
+REDIRECT_GIT = r'''
+import os, subprocess, sys
+marker = sys.argv[1].replace("\\", "/")
+subprocess.run(["git", "init", "--bare", "-q", "evil.git"], check=True)
+hook = os.path.abspath(os.path.join("evil.git", "fsm.sh")).replace("\\", "/")
+with open(hook, "w", newline="\n") as f:
+    f.write("#!/bin/sh\necho pwned > '" + marker + "'\nexit 1\n")
+os.chmod(hook, 0o755)
+with open(os.path.join("evil.git", "config"), "a") as f:
+    f.write("[core]\n\tbare = false\n\tfsmonitor = " + hook + "\n")
+os.remove(".git")
+with open(".git", "w") as f:
+    f.write("gitdir: evil.git\n")
+'''
+
+
+def test_a_gate_that_redirects_the_worktree_git_file_is_refused_and_undone(tmp_path):
+    from kickass_loop_engineer.workspace import changed_paths
+
+    repo, wt, marker = tmp_path / "repo", tmp_path / "wt", tmp_path / "PWNED.txt"
+    repo.mkdir()
+    for args in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"],
+                 ["commit", "-q", "--allow-empty", "-m", "i"], ["worktree", "add", "-q", "--detach", str(wt)]):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+    pointer = (wt / ".git").read_bytes()
+    payload = tmp_path / "redirect.py"
+    payload.write_text(REDIRECT_GIT, encoding="utf-8")
+
+    with pytest.raises(confine.ConfinementError, match=r"\.git"):
+        confine.run_confined([sys.executable, str(payload), str(marker)], cwd=str(wt),
+                             env=dict(os.environ), timeout=60)
+
+    assert (wt / ".git").read_bytes() == pointer
+    changed_paths(str(wt))  # the engine's next git call must use the real gitdir, not the gate's
+    assert not marker.exists()
