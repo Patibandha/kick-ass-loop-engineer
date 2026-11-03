@@ -38,8 +38,8 @@ accepted as trusted. Proposed in Q6, awaiting Meet.
 
 ## D7 git config
 
-BOUND. `WorktreeManager` records a deterministic SHA-256 digest of `.git/config` and all files under `.git/hooks/` when
-creating a worktree, and `promote` refuses if either changed during the attempt. Proposed in Q7, awaiting Meet.
+BOUND. `WorktreeManager` records a deterministic SHA-256 digest of the common git dir's `config` and all files under
+`hooks/` (resolved with `git rev-parse --git-common-dir`, so a linked-worktree workspace is covered) when creating a worktree, and `promote` refuses if either changed during the attempt. Proposed in Q7, awaiting Meet.
 
 ## D8 plugins
 

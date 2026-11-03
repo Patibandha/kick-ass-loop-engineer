@@ -40,7 +40,7 @@ class WorktreeManager:
         self._repo_root = os.path.abspath(repo_root)
         self._base_dir: str = base_dir if base_dir is not None else tempfile.mkdtemp()
         self._counter: int = 0
-        self._git_Baseline: dict[str, str] = {}
+        self._git_baseline: dict[str, str] = {}
         self._init_git_baseline: str = self._git_config_digest()
 
     # ------------------------------------------------------------------
@@ -77,7 +77,7 @@ class WorktreeManager:
         self._git("worktree", "add", "--detach", path, "HEAD")
         self._seed_uncommitted(os.path.abspath(path))
         wt_path = os.path.abspath(path)
-        self._git_Baseline[os.path.normcase(os.path.realpath(wt_path))] = self._git_config_digest()
+        self._git_baseline[os.path.normcase(os.path.realpath(wt_path))] = self._git_config_digest()
         return wt_path
 
     def _seed_uncommitted(self, worktree_path: str) -> None:
@@ -205,7 +205,7 @@ class WorktreeManager:
         src = os.path.abspath(src_worktree)
         dest = os.path.abspath(dest_workspace)
         write_policy = policy if policy is not None else WritePolicy()
-        baseline = self._git_Baseline.get(
+        baseline = self._git_baseline.get(
             os.path.normcase(os.path.realpath(src)), self._init_git_baseline
         )
         if self._git_config_digest() != baseline:
@@ -256,9 +256,13 @@ class WorktreeManager:
     # ------------------------------------------------------------------
 
     def _git_config_digest(self) -> str:
-        """Compute a deterministic SHA-256 digest of ``.git/config`` and ``.git/hooks/``."""
+        """Compute a deterministic SHA-256 digest of the common git dir's ``config`` and ``hooks/``.
+
+        The common dir, not ``<repo_root>/.git``: when *repo_root* is itself a linked worktree its ``.git`` is a
+        pointer file, and the config and hooks every worktree shares live in the main repository's git dir.
+        """
         hasher = hashlib.sha256()
-        git_dir = os.path.join(self._repo_root, ".git")
+        git_dir = self._common_git_dir()
         config_path = os.path.join(git_dir, "config")
         if os.path.isfile(config_path) and not os.path.islink(config_path):
             try:
@@ -291,6 +295,14 @@ class WorktreeManager:
                     except OSError:
                         hasher.update(b"hook:unreadable:" + rel.encode("utf-8") + b"\0")
         return hasher.hexdigest()
+
+    def _common_git_dir(self) -> str:
+        """The git dir shared by every worktree of *repo_root*; ``<repo_root>/.git`` when git cannot say."""
+        try:
+            common = self._git("rev-parse", "--git-common-dir").stdout.strip()
+        except WorktreeError:
+            common = ""
+        return os.path.normpath(os.path.join(self._repo_root, common or ".git"))
 
     def _git(self, *args: str, timeout: int = 60) -> subprocess.CompletedProcess:
         """Run a ``git -C <repo_root> <args>`` command.
