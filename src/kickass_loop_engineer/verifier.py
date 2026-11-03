@@ -200,7 +200,7 @@ def _changed_entries(workspace: str) -> list[tuple[str, str]]:
         subprocess.CalledProcessError: When the git command fails.
         subprocess.TimeoutExpired: When the git command does not finish in time.
     """
-    fields = _git(workspace, "status", "--porcelain", "-z",
+    fields = _git(workspace, "status", "--porcelain", "-z", "--ignore-submodules=all",
                   "--untracked-files=all").stdout.split("\0")
     entries: list[tuple[str, str]] = []
     position = 0
