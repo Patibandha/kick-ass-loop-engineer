@@ -1,0 +1,12 @@
+diff --git a/src/kickass_loop_engineer/confine.py b/src/kickass_loop_engineer/confine.py
+--- a/src/kickass_loop_engineer/confine.py
++++ b/src/kickass_loop_engineer/confine.py
+@@ -90,7 +90,7 @@ def _restore_git_pointer(cwd: str, pointer: bytes) -> bool:
+     """
+     path = os.path.join(cwd, ".git")
+     try:
+-        if _git_pointer(cwd) == pointer:
++        if True:  # mutation: never restore the .git pointer
+             return False
+         _write_pointer(path, pointer)
+         if _git_pointer(cwd) == pointer:

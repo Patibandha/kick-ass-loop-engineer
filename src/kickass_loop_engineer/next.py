@@ -46,6 +46,7 @@ from .research import (check_citations, check_tag_coverage, parse_research,
                        select_citations)
 from .router import SkillRouter, StageRoute
 from .terminal import TerminalState
+from .workspace import write_text_unlinked
 
 logger = logging.getLogger("kickass_loop_engineer.next")
 
@@ -601,6 +602,8 @@ def _load_ledger(workspace: str) -> dict:
     try:
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
+        if not isinstance(data, dict):
+            raise TypeError("retry ledger is not a JSON object")
         return {
             "stage": str(data.get("stage", "")),
             "attempts": int(data.get("attempts", 0)),
@@ -612,7 +615,7 @@ def _load_ledger(workspace: str) -> dict:
 
 
 def _save_ledger(workspace: str, ledger: dict) -> None:
-    """Atomically persist the retry ledger (engine never touches this file)."""
+    """Atomically persist the retry ledger, refusing links (engine never touches this file)."""
     directory = os.path.join(workspace, ".loop-engineer")
     path = os.path.join(workspace, _LEDGER_REL)
     payload = {"stage": ledger.get("stage", ""),
@@ -621,9 +624,6 @@ def _save_ledger(workspace: str, ledger: dict) -> None:
                "research_rounds": ledger.get("research_rounds", 0)}
     try:
         os.makedirs(directory, exist_ok=True)
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2)
-        os.replace(tmp, path)
+        write_text_unlinked(path, json.dumps(payload, indent=2))
     except OSError:
         logger.exception("could not persist next.json retry ledger")

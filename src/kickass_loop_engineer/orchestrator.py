@@ -45,9 +45,10 @@ from .reproduce import FIX_MODE_RULES, generate_repro, repro_check_command
 from .review import CrossModelReviewError, blocking_findings, write_slice_review
 from .session import BuildSession
 from .terminal import RunOutcome, TerminalState
-from .verifier import OBSERVER_CAP, EvidenceRecord, GatesResult, run_gates, support_only_note
+from .verifier import (OBSERVER_CAP, EvidenceRecord, GatesResult, bound_digest, run_gates, still_fresh,
+                       support_only_note)
 from .visual import visual_critique
-from .workspace import Workspace, write_text_unlinked
+from .workspace import Workspace, git_argv, write_text_unlinked
 from .worktree import WorktreeError
 
 logger = logging.getLogger("kickass_loop_engineer.orchestrator")
@@ -74,7 +75,7 @@ def _is_git_repo(workspace: str) -> bool:
     """
     try:
         result = subprocess.run(
-            ["git", "-C", workspace, "rev-parse", "--is-inside-work-tree"],
+            git_argv("-C", workspace, "rev-parse", "--is-inside-work-tree"),
             capture_output=True, text=True, timeout=30,
         )
         return result.returncode == 0
@@ -433,7 +434,7 @@ class Orchestrator:
             try:
                 result = generate_repro(
                     self.builder, self.objective, self.workspace,
-                    policy=self.policy,
+                    policy=self.policy, worktrees=self.worktrees,
                     on_usage=lambda r: self._record_cost("reproduce", r))
             except ProviderError as exc:
                 return RunOutcome(TerminalState.BLOCKED,
@@ -495,7 +496,7 @@ class Orchestrator:
                 self.reviewer, repo_map_text, files, self.gates,
                 self.workspace, policy=self.policy,
                 on_usage=lambda r: self._record_cost("audit", r),
-                budget_check=budget_check)
+                budget_check=budget_check, worktrees=self.worktrees)
         except ProviderError as exc:
             # A reviewer format-retry failure attaches the COMPLETED first
             # call's spend as ``partial_result`` — ledger it (M1 invariant).
@@ -569,7 +570,7 @@ class Orchestrator:
             return True
         try:
             status = subprocess.run(
-                ["git", "status", "--porcelain", "--", self._repro_path],
+                git_argv("status", "--porcelain", "--ignore-submodules=all", "--", self._repro_path),
                 cwd=root, capture_output=True, text=True,
                 check=True, timeout=60)
             if status.stdout.strip():
@@ -581,7 +582,7 @@ class Orchestrator:
                     self.run_id, "reproduce", "tamper_detected", "warn",
                     {"path": self._repro_path, "root": root}))
             subprocess.run(
-                ["git", "checkout", "--", self._repro_path],
+                git_argv("checkout", "--", self._repro_path),
                 cwd=root, capture_output=True, text=True,
                 check=True, timeout=60)
             return True
@@ -926,7 +927,10 @@ class Orchestrator:
             if outcome is not None:
                 return outcome
 
-        final = run_gates(self.gates, self.workspace, policy=self.policy)
+        try:
+            final = self._final_gates()
+        except WorktreeError as exc:
+            return RunOutcome(TerminalState.BLOCKED, f"could not create the final-gate worktree: {exc}")
         if not final.passed:
             # Fail-fast means the LAST record is the failure; an empty record
             # list means nothing ran at all.
@@ -935,6 +939,20 @@ class Orchestrator:
             return RunOutcome(TerminalState.BLOCKED, reason)
         evidence = [final.to_dict()] + [e.to_dict() for e in self._slice_evidence]
         return RunOutcome(TerminalState.SUCCESS, reason="all gates green", evidence=evidence)
+
+    def _final_gates(self) -> GatesResult:
+        """Gate the promoted state in a throwaway worktree seeded from the workspace, never in the workspace.
+
+        A confined gate may write anywhere in its working folder, so its folder is labelled writable for the run.
+        That must never be the user's workspace: a gate there could plant ``.git`` hooks and config, or forge
+        run state, after promote's checks already ran.
+        """
+        worktree = self.worktrees.create("final-gate")
+        try:
+            self._propagate_engine_artifacts(worktree)
+            return run_gates(self.gates, worktree, policy=self.policy)
+        finally:
+            self.worktrees.remove(worktree)
 
     def _run_slice(self, slice_) -> RunOutcome | None:
         """Build, gate, review, and promote one slice.
@@ -1196,8 +1214,20 @@ class Orchestrator:
             raise
 
         # 9. Promote the winner; clean up every attempt worktree either way.
+        #    Review ran after the gates: a winner whose candidate changed in
+        #    between is stale and never promoted on the earlier verdict.
+        if not still_fresh(winner.evidence, winner.workspace):
+            self._remove_attempts(attempts)
+            return RunOutcome(
+                TerminalState.BLOCKED,
+                f"candidate for slice '{slice_.role}' changed after its gate passed; "
+                "the earlier verdict is stale and was not promoted (fail closed)")
+        bound = bound_digest(winner.evidence)
         try:
-            self.worktrees.promote(winner.workspace, self.workspace)
+            if bound is None:
+                self.worktrees.promote(winner.workspace, self.workspace)
+            else:
+                self.worktrees.promote(winner.workspace, self.workspace, expected_digest=bound)
         except WorktreeError as exc:
             return RunOutcome(TerminalState.BLOCKED, f"promotion failed: {exc}")
         finally:

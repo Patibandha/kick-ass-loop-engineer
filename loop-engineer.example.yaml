@@ -51,6 +51,8 @@ guardrails:
   max_file_bytes: 1000000
   max_files_per_round: 50
   allow_overwrite: true
+#   gate_timeout_seconds: 900  # per gate command (default 300, allowed 10-7200);
+#                              # raise it for a whole-suite gate that runs long
 #   extra_verify_prefixes:     # extend the verification allowlist — MUST be a
 #     - "mytool check"         # list (scalars are rejected). WARNING: these run
 #                              # with gate authority; every use logs a warning.

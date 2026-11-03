@@ -358,7 +358,8 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--cmd", required=True, help="allowlisted gate command (e.g. 'pytest -q')")
     verify.add_argument("--prove", action="store_true",
                         help="require proof-of-test (revert->red->green)")
-    verify.add_argument("--workspace", default="./workspace", help="git workspace to run in")
+    verify.add_argument("--workspace", default="./workspace",
+                        help="git workspace to run in; the gate can write all of it, its .git included")
     verify.set_defaults(func=_cmd_verify)
 
     run = sub.add_parser("run", help="run the full verified pipeline")

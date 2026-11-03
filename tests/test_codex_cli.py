@@ -103,7 +103,24 @@ class CodexCompleteTests(unittest.TestCase):
         self.assertNotIn("OPENAI_API_KEY", env)
         self.assertNotIn("TYPESAFE_API_KEY", env)
         self.assertNotIn("CLOUDFLARE_API_TOKEN", env)
+        self.assertNotIn("CLOUDFLARE_API_TOKEN", env)
         self.assertEqual(env["KEEP"], "1")
+
+    def test_arbitrary_credential_env_vars_are_scrubbed(self):
+        fake = FakeCodex()
+        keys = {
+            "GITHUB_TOKEN": "ghp_1",
+            "AWS_SECRET_ACCESS_KEY": "aws_1",
+            "DATABASE_PASSWORD": "pw_1",
+            "STRIPE_API_KEY": "sk_1",
+            "NORMAL_VAR": "ok",
+        }
+        with mock.patch.dict(os.environ, keys):
+            self.run_complete(fake)
+        env = fake.calls[0]["env"]
+        for key in ("GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "DATABASE_PASSWORD", "STRIPE_API_KEY"):
+            self.assertNotIn(key, env)
+        self.assertEqual(env["NORMAL_VAR"], "ok")
 
 
 class CodexEditTests(unittest.TestCase):
