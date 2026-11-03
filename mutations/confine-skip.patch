@@ -1,7 +1,7 @@
 diff --git a/src/kickass_loop_engineer/confine.py b/src/kickass_loop_engineer/confine.py
 --- a/src/kickass_loop_engineer/confine.py
 +++ b/src/kickass_loop_engineer/confine.py
-@@ -288,7 +288,7 @@ def run_confined(argv: list, *, cwd: str, env: dict,
+@@ -140,7 +140,7 @@ def run_confined(argv: list, *, cwd: str, env: dict,
  
  def _run(argv: list, *, cwd: str, env: dict, timeout: float) -> tuple[subprocess.CompletedProcess, bool]:
      """``run_confined`` without the ``.git`` pointer check."""
