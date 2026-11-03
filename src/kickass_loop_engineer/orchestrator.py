@@ -434,7 +434,7 @@ class Orchestrator:
             try:
                 result = generate_repro(
                     self.builder, self.objective, self.workspace,
-                    policy=self.policy,
+                    policy=self.policy, worktrees=self.worktrees,
                     on_usage=lambda r: self._record_cost("reproduce", r))
             except ProviderError as exc:
                 return RunOutcome(TerminalState.BLOCKED,
@@ -496,7 +496,7 @@ class Orchestrator:
                 self.reviewer, repo_map_text, files, self.gates,
                 self.workspace, policy=self.policy,
                 on_usage=lambda r: self._record_cost("audit", r),
-                budget_check=budget_check)
+                budget_check=budget_check, worktrees=self.worktrees)
         except ProviderError as exc:
             # A reviewer format-retry failure attaches the COMPLETED first
             # call's spend as ``partial_result`` — ledger it (M1 invariant).

@@ -1897,7 +1897,7 @@ def _fix_orch(tmp_path, workspace, responses):
 
 def _fake_repro(monkeypatch, result, calls=None):
     """Replace the orchestrator's generate_repro with a canned-result fake."""
-    def fake(builder, objective, workspace, policy=None, on_usage=None):
+    def fake(builder, objective, workspace, policy=None, on_usage=None, worktrees=None):
         if calls is not None:
             calls.append((objective.goal, workspace))
         return result
@@ -2386,7 +2386,7 @@ def test_audit_ledgers_every_reviewer_call(tmp_path, monkeypatch):
     assert persisted["months"]["2026-07"] == pytest.approx(0.03)
 
 
-def test_audit_read_only_gates_run_in_the_main_workspace(tmp_path, monkeypatch):
+def test_audit_read_only_gates_run_in_a_throwaway_worktree(tmp_path, monkeypatch):
     _counting_repomap(monkeypatch)
     policy = FakePolicy(passed=True)
     workspace = _git_ws(tmp_path)
@@ -2400,8 +2400,9 @@ def test_audit_read_only_gates_run_in_the_main_workspace(tmp_path, monkeypatch):
     outcome = orch.run()
 
     assert outcome.state is TerminalState.SUCCESS
-    assert policy.runs == [("bandit -r .", workspace)], \
-        "only the read-only gate ran, and in the main workspace"
+    assert policy.runs == [("bandit -r .", orch.worktrees.created[0])], \
+        "only the read-only gate ran, and in a throwaway worktree"
+    assert orch.worktrees.created[0] != workspace and orch.worktrees.removed == orch.worktrees.created
     text = open(os.path.join(workspace, ".loop-engineer", "findings.md"),
                 encoding="utf-8").read()
     assert "PASS security" in text
