@@ -13,6 +13,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+import pytest
+
 from kickass_loop_engineer.providers import PROVIDERS, build_provider
 from kickass_loop_engineer.providers import base
 from kickass_loop_engineer.providers.base import ProviderError
@@ -23,6 +25,13 @@ from kickass_loop_engineer.review import model_family
 def _program(command):
     """argv with its program reduced to the bare CLI name (it is resolved on PATH when installed)."""
     return [os.path.splitext(os.path.basename(command[0]))[0].lower(), *command[1:]]
+
+
+@pytest.fixture(autouse=True)
+def _clis_on_path(fake_cli_path):
+    """subprocess.run is stubbed below, but the program lookup in front of it needs the CLI on PATH."""
+    return fake_cli_path
+
 
 _HAPPY_STDOUT = json.dumps({
     "conversation_id": "conv-1",

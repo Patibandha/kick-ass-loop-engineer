@@ -61,3 +61,21 @@ def _interpreter_folder_first_on_path(monkeypatch):
     """
     folder = os.path.dirname(sys.executable)
     monkeypatch.setenv("PATH", os.pathsep.join([folder, os.environ.get("PATH", "")]))
+
+
+@pytest.fixture
+def fake_cli_path(tmp_path, monkeypatch):
+    """Put stand-in claude/agy/codex programs first on PATH.
+
+    Provider tests stub ``subprocess.run``, but the program lookup in front of
+    it (``cli_process.find_program``) still needs the CLI on PATH; CI runners
+    have none installed.
+    """
+    folder = tmp_path / "fake-cli-bin"
+    folder.mkdir()
+    for name in ("claude", "agy", "codex"):
+        program = folder / (f"{name}.exe" if os.name == "nt" else name)
+        program.write_bytes(b"")
+        program.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{folder}{os.pathsep}{os.environ.get('PATH', '')}")
+    return folder
