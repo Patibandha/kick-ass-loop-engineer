@@ -18,6 +18,18 @@ come from version control.
 
 ---
 
+## 3.5.1 — CLI providers start npm `.cmd` shims
+
+### Fixed
+- **The `claude` and `agy` providers start CLIs installed as npm `.cmd` shims on Windows.** They passed the bare
+  name to `subprocess.run`; CreateProcess does not apply PATHEXT, so `claude.CMD` raised `FileNotFoundError`
+  and every build failed with `claude binary not found`. All three subscription-CLI providers (`claude`, `agy`,
+  `codex`) now resolve the program through `providers.cli_process.resolve_argv`: the child's PATH and PATHEXT,
+  absolute PATH folders only, never the current directory (a `claude.cmd` planted in a worktree cannot win),
+  and a CLI that is not found fails closed instead of letting Windows search the current directory.
+  Still no `shell=True`; a `.cmd`/`.bat` program whose path or arguments hold `% ! ^ & | < >` or a line break,
+  which `cmd.exe` would otherwise re-interpret, is refused.
+
 ## 3.5.0 — Windows gate confinement, Q1-Q8 proposals (unreleased)
 
 ### Added

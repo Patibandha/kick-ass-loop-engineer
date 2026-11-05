@@ -44,6 +44,7 @@ from .base import (
     as_int,
     retry_transient,
 )
+from .cli_process import resolve_argv
 
 #: Prose/dispatcher tools. Deliberately read-only: ``complete`` serves the
 #: decompose/architect/review roles, and a reviewer that can edit the code it
@@ -269,7 +270,7 @@ class ClaudeCodeProvider(Provider):
 
         try:
             completed = subprocess.run(
-                command,
+                resolve_argv(command, env),
                 input=prompt,
                 env=env,
                 cwd=cwd,
