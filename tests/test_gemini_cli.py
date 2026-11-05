@@ -7,6 +7,7 @@ never makes the suite wait; the retry policy itself is covered in
 ``tests/test_providers_retry.py``.
 """
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -17,6 +18,11 @@ from kickass_loop_engineer.providers import base
 from kickass_loop_engineer.providers.base import ProviderError
 from kickass_loop_engineer.providers.gemini_cli import GeminiCliProvider
 from kickass_loop_engineer.review import model_family
+
+
+def _program(command):
+    """argv with its program reduced to the bare CLI name (it is resolved on PATH when installed)."""
+    return [os.path.splitext(os.path.basename(command[0]))[0].lower(), *command[1:]]
 
 _HAPPY_STDOUT = json.dumps({
     "conversation_id": "conv-1",
@@ -117,7 +123,7 @@ class GeminiCliCommandTests(unittest.TestCase):
 
     def test_command_is_headless_stream_json_with_no_prompt_in_argv(self):
         command = self.run_call().call_args.args[0]
-        self.assertEqual(command, ["agy", "-p", "", "--input-format", "stream-json",
+        self.assertEqual(_program(command), ["agy", "-p", "", "--input-format", "stream-json",
                                    "--output-format", "stream-json"])
 
     def test_model_is_not_passed_as_a_cli_flag(self):
@@ -285,7 +291,7 @@ class GeminiCliEditTests(unittest.TestCase):
         # Identical to complete's: agy has no tool-permission flags, and the
         # prompt is on stdin for both (see PromptOnStdinTests).
         command = self.edit_call(model="gemini-3-pro").call_args.args[0]
-        self.assertEqual(command, ["agy", "-p", "", "--input-format", "stream-json",
+        self.assertEqual(_program(command), ["agy", "-p", "", "--input-format", "stream-json",
                                    "--output-format", "stream-json"])
 
     def test_edit_passes_the_given_cwd_and_edit_timeout(self):

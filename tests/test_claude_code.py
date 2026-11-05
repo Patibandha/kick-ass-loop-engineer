@@ -16,6 +16,11 @@ from kickass_loop_engineer.providers import base
 from kickass_loop_engineer.providers.base import ProviderError
 from kickass_loop_engineer.providers.claude_code import ClaudeCodeProvider
 
+
+def _program(command):
+    """argv with its program reduced to the bare CLI name (it is resolved on PATH when installed)."""
+    return [os.path.splitext(os.path.basename(command[0]))[0].lower(), *command[1:]]
+
 _HAPPY_STDOUT = json.dumps({
     "is_error": False,
     "result": "hello from claude stub",
@@ -162,7 +167,7 @@ class ClaudeCodeEditTests(unittest.TestCase):
 
     def test_edit_argv_carries_the_edit_tools_permission_mode_and_model(self):
         command = self.edit_call(model="test-model").call_args.args[0]
-        self.assertEqual(command[:4],
+        self.assertEqual(_program(command)[:4],
                          ["claude", "-p", "--output-format", "json"])
         self.assertEqual(command[command.index("--allowedTools") + 1],
                          "Read,Edit,Write,Glob,Grep,Bash")
@@ -381,7 +386,7 @@ class PromptOnStdinTests(unittest.TestCase):
             ClaudeCodeProvider().complete("sys", "user")
         command = run_mock.call_args.args[0]
         self.assertNotIn("sys\n\nuser", command)
-        self.assertEqual(command[:4], ["claude", "-p", "--output-format", "json"])
+        self.assertEqual(_program(command)[:4], ["claude", "-p", "--output-format", "json"])
 
     def test_edit_sends_the_prompt_on_stdin(self):
         with self._run_mock() as run_mock:
@@ -393,7 +398,7 @@ class PromptOnStdinTests(unittest.TestCase):
             ClaudeCodeProvider().edit("sys", "user", cwd=self.tmp.name)
         command = run_mock.call_args.args[0]
         self.assertNotIn("sys\n\nuser", command)
-        self.assertEqual(command[:4], ["claude", "-p", "--output-format", "json"])
+        self.assertEqual(_program(command)[:4], ["claude", "-p", "--output-format", "json"])
 
     def test_a_prompt_far_over_the_windows_argv_limit_stays_out_of_argv(self):
         """The regression this class exists for: 120k of brief, none of it argv."""

@@ -61,6 +61,7 @@ from .base import (
     as_int,
     retry_transient,
 )
+from .cli_process import resolve_argv
 
 #: Prefixed to every :meth:`GeminiCliProvider.complete` prompt. Handed a long
 #: brief, agy 1.1.15 would call a file tool instead of answering; its file tools
@@ -291,7 +292,7 @@ class GeminiCliProvider(Provider):
 
         try:
             completed = subprocess.run(
-                command,
+                resolve_argv(command, env),
                 input=stdin,
                 env=env,
                 cwd=cwd,
